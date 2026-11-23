@@ -30,6 +30,7 @@ Benodigde omgevingsvariabelen:
 | `ADMIN_NAME` | Voorgestelde naam voor het eerste beheeraccount |
 | `ADMIN_PASSWORD` | Beheerwachtwoord van 12–256 tekens; activeert de eigenaar rechtstreeks voor aanmelden via `/login` |
 | `BOOTSTRAP_TOKEN` | Een willekeurig geheim van minstens 32 URL-veilige tekens voor de eerste activatie |
+| `DEMO_CLEANUP_ID` | Optioneel: unieke naam voor een eenmalige opruiming van demoleads bij het opstarten; normaal leeg |
 
 Met `ADMIN_PASSWORD` ingesteld beheert Railway de bestaande eigenaarlogin. De server bewaart het wachtwoord gehasht in de database en behoudt diens bedrijf en geschiedenis. Een gewijzigd beheerwachtwoord of e-mailadres wordt bij de volgende deployment toegepast en trekt bestaande beheerderssessies in. Een ongewijzigde instelling behoudt bestaande sessies. Dit eigenaaraccount blijft hoofdbeheerder. Bewaar de werkelijke waarden uitsluitend in Railway Variables; zet ze nooit in GitHub.
 
@@ -45,6 +46,6 @@ Node.js 24 is vereist. Er zijn geen externe runtimepakketten nodig. Stel de vari
 
 ## Huidige grenzen
 
-Nieuwe installaties starten zonder demoleads. Handmatig toegevoegde leads en opvolging worden gedeeld opgeslagen. Bestaande demoleads kunnen uitsluitend door een hoofdbeheerder worden opgeruimd via de onderhoudsactie `demo.remove`; alleen records met `demo === true` worden verwijderd, met een privéarchief van die demogegevens. Accounts, uitnodigingen, instellingen en handmatige leads blijven behouden. Bouwberichten.nl, hotels, VvE en Outlook zijn nog niet aangesloten; de app bewaart geen bronwachtwoorden. Terugbelmeldingen verschijnen in een geopend tabblad en worden iedere 30 seconden ververst. Er is nog geen automatische e-mailverzending of e-mailgestuurde wachtwoordherstelprocedure.
+Nieuwe installaties starten zonder demoleads. Handmatig toegevoegde leads en opvolging worden gedeeld opgeslagen. Bestaande demoleads kunnen door een hoofdbeheerder worden opgeruimd via de onderhoudsactie `demo.remove`. Ook de beheerder van de Railway-omgeving kan hiervoor een eenmalige `DEMO_CLEANUP_ID` instellen. De opruiming, het privéarchief en de registratie van de uitgevoerde onderhoudsstap worden samen opgeslagen; dezelfde naam voert de stap bij een herstart niet nogmaals uit. Alleen records met `demo === true` worden verwijderd. Accounts, uitnodigingen, instellingen en handmatige leads blijven behouden. Er is hiervoor geen extra openbaar onderhoudsendpoint. Bouwberichten.nl, hotels, VvE en Outlook zijn nog niet aangesloten; de app bewaart geen bronwachtwoorden. Terugbelmeldingen verschijnen in een geopend tabblad en worden iedere 30 seconden ververst. Er is nog geen automatische e-mailverzending of e-mailgestuurde wachtwoordherstelprocedure.
 
 Accounts gebruiken gehashte wachtwoorden en willekeurige, gehashte sessie- en uitnodigingstokens. De server controleert rollen en bedrijfsrechten bij iedere wijziging. Cookies zijn in productie HttpOnly, Secure en SameSite=Lax; schrijfacties vereisen een sessiegebonden CSRF-token.

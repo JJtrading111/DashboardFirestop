@@ -15,7 +15,7 @@ const ADMIN_EMAIL = 'owner@example.test';
 async function fixture(extra = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'bouwberichten-api-test-'));
   const bootstrapToken = randomBytes(32).toString('base64url');
-  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', adminPassword: '', seedDemoData: true, publicOrigin: '', secureCookies: false, ...extra};
+  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', adminPassword: '', demoCleanupId: '', seedDemoData: true, publicOrigin: '', secureCookies: false, ...extra};
   let app, base;
   async function start() {
     app = await createApp(options);
@@ -59,6 +59,7 @@ async function fixture(extra = {}) {
   return {
     client, bootstrapToken: options.bootstrapToken, dataDir,
     get base() {return base;},
+    get maintenanceResult() {return app?.maintenanceResult;},
     async restart(optionsPatch = {}) {if (app) await app.close(); app = null; Object.assign(options, optionsPatch); await start();},
     async close() {
       if (app) {await app.close(); app = null;}
@@ -86,11 +87,14 @@ function assertNoSecrets(state) {
 function databaseSnapshot(dataDir) {
   const db = new DatabaseSync(path.join(dataDir, 'dashboard.sqlite'));
   try {
+    const optionalRows = table => db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table) ? db.prepare(`SELECT * FROM ${table} ORDER BY id`).all().map(row => ({...row})) : [];
     return {
       state: JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json),
       credentials: db.prepare('SELECT * FROM credentials ORDER BY user_id').all().map(row => ({...row})),
       sessions: db.prepare('SELECT * FROM sessions ORDER BY token_hash').all().map(row => ({...row})),
-      invitations: db.prepare('SELECT * FROM invitations ORDER BY id').all().map(row => ({...row}))
+      invitations: db.prepare('SELECT * FROM invitations ORDER BY id').all().map(row => ({...row})),
+      archives: optionalRows('demo_lead_archives'),
+      migrations: optionalRows('app_migrations')
     };
   } finally {db.close();}
 }
@@ -582,4 +586,103 @@ test('a fresh normal application starts with no demo leads and keeps accounts av
   assert.deepEqual(result.result, {removedCount: 0, remainingCount: 0});
   await env.restart();
   assert.equal(accepted(await owner.state()).state.leads.length, 0);
+});
+
+test('an explicit startup cleanup runs once without changing credentials, sessions or real work', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner = env.client(), seller = env.client();
+  accepted(await owner.activate(env.bootstrapToken, 'Werkende eigenaar'));
+  const invitation = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Bestaande verkoper', email: 'startup-seller@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+  accepted(await seller.activate(invitation.token, 'Bestaande verkoper', OTHER_PASSWORD));
+  accepted(await owner.action('invitation.create', 'c-noord', {name: 'Open uitnodiging bewaren', email: 'startup-pending@example.test', companyId: 'c-noord', role: 'verkoper'}));
+  accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 96}));
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Demogeschiedenis voor het privéarchief'}));
+  accepted(await owner.action('call.record', 'c-noord', {leadId: 'l-01'}));
+  const created = accepted(await owner.action('lead.create', 'c-noord', {title: 'Echt project naast de demovoorraad', organization: 'Bestaande klant', city: 'Leiden', source: 'vve', contact: 'Eigen contact', phone: '+31 20 000 7733', email: 'startup-real@example.test', description: 'Dit handmatig toegevoegde project en alle opvolging blijven behouden.'}));
+  const realId = created.result.lead?.id || created.result.leadId;
+  accepted(await seller.action('note.add', 'c-noord', {leadId: realId, text: 'Blijvende echte gespreksnotitie'}));
+  accepted(await seller.action('call.record', 'c-noord', {leadId: realId}));
+  accepted(await seller.action('callback.add', 'c-noord', {leadId: realId, dueAt: new Date(Date.now() + 3600000).toISOString(), assigneeId: seller.user.id}));
+  const before = databaseSnapshot(env.dataDir);
+  await env.restart({demoCleanupId: ''});
+  assert.equal(env.maintenanceResult, null);
+  assert.deepEqual(databaseSnapshot(env.dataDir), before, 'Starting without a cleanup ID must not clean existing data');
+  const cleanupId = 'remove-demo-leads-test-2026-11-23';
+  await env.restart({demoCleanupId: cleanupId});
+  assert.deepEqual(env.maintenanceResult, {removedCount: 18, remainingCount: 1});
+  const after = databaseSnapshot(env.dataDir);
+  assert.equal(after.state.leads.length, 1);
+  assert.equal(after.state.leads[0].id, realId);
+  assert.deepEqual(after.state.workspaces['c-noord'][realId], before.state.workspaces['c-noord'][realId]);
+  assert.deepEqual(after.state.users, before.state.users);
+  assert.deepEqual(after.state.companies, before.state.companies);
+  assert.deepEqual(after.state.settings, before.state.settings);
+  assert.deepEqual(after.credentials, before.credentials);
+  assert.deepEqual(after.sessions, before.sessions);
+  assert.deepEqual(after.invitations, before.invitations);
+  assert.equal(after.archives.length, 1);
+  assert.equal(after.migrations.length, 1);
+  assert.equal(after.migrations[0].id, cleanupId);
+  assert.deepEqual(JSON.parse(after.migrations[0].result_json), {removedCount: 18, remainingCount: 1});
+  assert.equal(accepted(await owner.request('/api/session')).user.name, 'Werkende eigenaar');
+  assert.equal(accepted(await seller.request('/api/session')).authenticated, true);
+  const ownState = accepted(await owner.state()).state;
+  assert.ok(!Object.keys(ownState).some(key => /archive|migration/i.test(key)));
+  assert.equal(JSON.stringify(ownState).includes('Demogeschiedenis voor het privéarchief'), false);
+  const setup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  const withNewDemo = JSON.parse(setup.prepare('SELECT json FROM app_state WHERE id=1').get().json);
+  withNewDemo.leads.push({...before.state.leads.find(lead => lead.demo === true), id: 'demo-added-after-completed-migration'});
+  setup.prepare('UPDATE app_state SET json=? WHERE id=1').run(JSON.stringify(withNewDemo));
+  setup.close();
+  const inserted = databaseSnapshot(env.dataDir);
+  await env.restart({demoCleanupId: cleanupId});
+  assert.equal(env.maintenanceResult, null);
+  assert.deepEqual(databaseSnapshot(env.dataDir), inserted, 'The same ID must never re-run, even if a new demo fixture record is added later');
+  await env.restart({demoCleanupId: ''});
+  assert.equal(env.maintenanceResult, null);
+  assert.deepEqual(databaseSnapshot(env.dataDir), inserted);
+  assert.equal(accepted(await seller.state()).state.leads.length, 2);
+});
+
+test('malformed startup cleanup IDs fail before writing any application data or migration', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.activate(env.bootstrapToken, 'Eigenaar met bestaand wachtwoord'));
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Dit mag niet wijzigen door een ongeldige onderhoudsinstelling'}));
+  const before = databaseSnapshot(env.dataDir);
+  for (const invalidId of [true, false, 1, {}, [], ' ', '../cleanup', 'cleanup with spaces', 'cleanup\nnext', 'x'.repeat(129)]) {
+    await assert.rejects(env.restart({demoCleanupId: invalidId}), /DEMO_CLEANUP_ID/);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+  await env.restart({demoCleanupId: ''});
+  assert.equal(accepted(await owner.request('/api/session')).authenticated, true);
+  assert.equal(accepted(await owner.state()).state.leads.length, 18);
+});
+
+test('startup cleanup archives, removes and records its marker atomically', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.activate(env.bootstrapToken, 'Eigenaar zonder wachtwoordreset'));
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Verwijdering moet terugrollen als de marker niet kan worden vastgelegd'}));
+  const before = databaseSnapshot(env.dataDir);
+  const setup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  setup.exec("CREATE TRIGGER test_block_cleanup_marker BEFORE INSERT ON app_migrations BEGIN SELECT RAISE(ABORT,'Test blocked migration marker'); END;");
+  setup.close();
+  await assert.rejects(env.restart({demoCleanupId: 'atomic-cleanup-test'}), /Test blocked migration marker/);
+  assert.deepEqual(databaseSnapshot(env.dataDir), before, 'A failed marker must roll back both the archive and live data deletion');
+  const repair = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  repair.exec('DROP TRIGGER test_block_cleanup_marker;');
+  repair.close();
+  await env.restart({demoCleanupId: 'atomic-cleanup-test'});
+  assert.deepEqual(env.maintenanceResult, {removedCount: 18, remainingCount: 0});
+  const after = databaseSnapshot(env.dataDir);
+  assert.equal(after.state.leads.length, 0);
+  assert.equal(after.archives.length, 1);
+  assert.equal(after.migrations.length, 1);
+  assert.deepEqual(after.credentials, before.credentials);
+  assert.deepEqual(after.sessions, before.sessions);
+  assert.equal(accepted(await owner.request('/api/session')).authenticated, true);
 });

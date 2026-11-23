@@ -31,6 +31,8 @@ export function createApp(options={}){
  const adminName=options.adminName??process.env.ADMIN_NAME??'Beheerder';
  const adminPassword=options.adminPassword??process.env.ADMIN_PASSWORD??'';
  const bootstrapToken=options.bootstrapToken??process.env.BOOTSTRAP_TOKEN??'';
+ const demoCleanupId=options.demoCleanupId??process.env.DEMO_CLEANUP_ID??'';
+ if(typeof demoCleanupId!=='string'||demoCleanupId!==''&&!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(demoCleanupId))throw Error('DEMO_CLEANUP_ID must be empty or a 1–128 character maintenance identifier.');
  if(adminPassword&&(typeof adminPassword!=='string'||adminPassword.length<12||adminPassword.length>256))throw Error('ADMIN_PASSWORD must contain between 12 and 256 characters.');
  if(process.env.NODE_ENV==='production'&&!publicOrigin)throw Error('APP_URL is required in production.');
  if(publicOrigin&&new URL(publicOrigin).origin!==publicOrigin.replace(/\/$/,''))throw Error('APP_URL must contain only the public origin.');
@@ -42,11 +44,30 @@ export function createApp(options={}){
  CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,email TEXT NOT NULL,name TEXT NOT NULL,company_id TEXT NOT NULL,role TEXT NOT NULL,user_id TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL,creator_id TEXT);
  CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,csrf TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS demo_lead_archives(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,actor_id TEXT NOT NULL,json TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS app_migrations(id TEXT PRIMARY KEY,applied_at TEXT NOT NULL,result_json TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
  CREATE INDEX IF NOT EXISTS invitations_email ON invitations(email);`);
  const readState=()=>JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json);
  const writeState=s=>{const copy={...s,invitations:[]};db.prepare('INSERT INTO app_state(id,json) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(JSON.stringify(copy));};
  const transaction=fn=>{db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}};
+ function removeDemoLeads(s,actor,cid){
+  const demoLeads=s.leads.filter(lead=>lead.demo===true),removedIds=new Set(demoLeads.map(lead=>lead.id));
+  if(removedIds.size){
+   const archivedWorkspaces={};
+   for(const [companyId,entries]of Object.entries(s.workspaces)){
+    const archived=Object.fromEntries(Object.entries(entries).filter(([leadId])=>removedIds.has(leadId)));
+    if(Object.keys(archived).length)archivedWorkspaces[companyId]=archived;
+   }
+   const archive={leads:demoLeads,workspaces:archivedWorkspaces,callLog:s.callLog.filter(call=>removedIds.has(call.leadId)),feed:s.feed.filter(item=>removedIds.has(item.leadId))};
+   db.prepare('INSERT INTO demo_lead_archives(id,created_at,actor_id,json) VALUES(?,?,?,?)').run(id('demo-archive'),iso(Date.now()),actor.id,JSON.stringify(archive));
+   s.leads=s.leads.filter(lead=>lead.demo!==true);
+   for(const entries of Object.values(s.workspaces))for(const leadId of Object.keys(entries))if(removedIds.has(leadId))delete entries[leadId];
+   s.callLog=s.callLog.filter(call=>!removedIds.has(call.leadId));
+   s.feed=s.feed.filter(item=>!removedIds.has(item.leadId));
+   addFeed(s,actor,cid,`${removedIds.size} demoleads verwijderd`);
+  }
+  return{removedCount:removedIds.size,remainingCount:s.leads.length};
+ }
  if(!db.prepare('SELECT id FROM app_state WHERE id=1').get()){
   const seed=options.seedDemoData===true?createDemoState():{
    version:1,
@@ -88,6 +109,23 @@ export function createApp(options={}){
   tokenValue(bootstrapToken);const owner=readState().users.find(u=>u.id==='u-admin');
   if(owner)db.prepare('INSERT INTO invitations(id,token_hash,email,name,company_id,role,user_id,created_at,expires_at,status,creator_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('bootstrap-owner',digest(bootstrapToken),owner.email,owner.name,owner.companyId,owner.role,owner.id,Date.now(),Date.now()+INVITE_AGE,'pending',null);
  }
+ let maintenanceResult=null;
+ // Only an explicit deployment maintenance ID enables this one-time data cleanup.
+ // The archive, active-state update and completion marker commit atomically.
+ if(demoCleanupId){
+  try{
+   maintenanceResult=transaction(()=>{
+    if(db.prepare('SELECT id FROM app_migrations WHERE id=?').get(demoCleanupId))return null;
+    const s=readState(),owner=s.users.find(user=>user.id==='u-admin');
+    if(!owner)throw Error('The owner account required for maintenance is missing.');
+    const result=removeDemoLeads(s,owner,owner.companyId);
+    writeState(s);
+    db.prepare('INSERT INTO app_migrations(id,applied_at,result_json) VALUES(?,?,?)').run(demoCleanupId,iso(Date.now()),JSON.stringify(result));
+    return result;
+   });
+  }catch(error){db.close();throw error;}
+  if(maintenanceResult)console.log('Demo cleanup complete: '+JSON.stringify(maintenanceResult));
+ }
  const limits=new Map();let hashing=0;
  function rate(key,maximum,period=15*60000){const now=Date.now();let hit=limits.get(key);if(!hit||hit.until<now){hit={count:0,until:now+period};limits.set(key,hit);}if(++hit.count>maximum)fail(429,'Te veel pogingen. Probeer het later opnieuw.');if(limits.size>5000)for(const [k,v]of limits)if(v.until<now)limits.delete(k);}
  async function hashWork(fn){if(hashing>=8)fail(429,'Er zijn veel aanmeldpogingen. Probeer het over een moment opnieuw.');hashing++;try{return await fn();}finally{hashing--;}}
@@ -128,22 +166,7 @@ export function createApp(options={}){
   switch(type){
    case'demo.remove':{
     requireChief(actor);
-    const demoLeads=s.leads.filter(lead=>lead.demo===true),removedIds=new Set(demoLeads.map(lead=>lead.id));
-    if(removedIds.size){
-     const archivedWorkspaces={};
-     for(const [companyId,entries]of Object.entries(s.workspaces)){
-      const archived=Object.fromEntries(Object.entries(entries).filter(([leadId])=>removedIds.has(leadId)));
-      if(Object.keys(archived).length)archivedWorkspaces[companyId]=archived;
-     }
-     const archive={leads:demoLeads,workspaces:archivedWorkspaces,callLog:s.callLog.filter(call=>removedIds.has(call.leadId)),feed:s.feed.filter(item=>removedIds.has(item.leadId))};
-     db.prepare('INSERT INTO demo_lead_archives(id,created_at,actor_id,json) VALUES(?,?,?,?)').run(id('demo-archive'),iso(Date.now()),actor.id,JSON.stringify(archive));
-     s.leads=s.leads.filter(lead=>lead.demo!==true);
-     for(const entries of Object.values(s.workspaces))for(const leadId of Object.keys(entries))if(removedIds.has(leadId))delete entries[leadId];
-     s.callLog=s.callLog.filter(call=>!removedIds.has(call.leadId));
-     s.feed=s.feed.filter(item=>!removedIds.has(item.leadId));
-     addFeed(s,actor,cid,`${removedIds.size} demoleads verwijderd`);
-    }
-    result={removedCount:removedIds.size,remainingCount:s.leads.length};
+    result=removeDemoLeads(s,actor,cid);
     break;
    }
    case'workspace.update':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');w[field]=field==='ownerId'?(p.value||null):p.value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);break;}
@@ -193,7 +216,7 @@ export function createApp(options={}){
  }catch(error){const status=error instanceof ApiError?error.status:500;if(status===500)console.error('Request failed:',error?.name||'Error');if(!res.headersSent)json(res,status,{error:status===500?'Er ging iets mis. Probeer het opnieuw.':error.message});else res.end();}};
  const server=http.createServer(handler);server.requestTimeout=30000;server.headersTimeout=15000;
  const close=()=>new Promise((resolve,reject)=>{if(server.listening){server.close(error=>{db.close();error?reject(error):resolve();});server.closeIdleConnections();}else{db.close();resolve();}});
- return{server,handler,close};
+ return{server,handler,close,maintenanceResult};
 }
 
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
