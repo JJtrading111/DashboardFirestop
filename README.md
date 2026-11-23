@@ -4,6 +4,12 @@ Nederlandstalig leadbeheer met een centrale leadvoorraad en eigen opvolging per 
 
 Open een lead door op de hele Kanban-kaart te klikken, of gebruik Enter of de spatiebalk. De kolom Opvolgen sorteert op het vroegste open terugbelmoment van het actieve bedrijf. Afgehandelde afspraken tellen niet mee; leads zonder afspraak staan onderaan. Slepen blijft beschikbaar om een status te wijzigen.
 
+## Aanmelden
+
+Op het inlogscherm kun je **Aangemeld blijven** aanvinken. De aanmelding blijft dan maximaal 30 dagen op hetzelfde apparaat bewaard. Zonder vinkje gebruikt de app een sessiecookie en vervalt de toegang op de server na 12 uur. Uitloggen beëindigt de betreffende sessie direct. Een geldige sessie opent het dashboard ook wanneer je opnieuw naar `/login` gaat.
+
+Met **Tonen / Verbergen** kun je het wachtwoord zichtbaar maken en weer afschermen. Deze knoppen staan ook bij beide wachtwoordvelden tijdens accountactivatie. Het wachtwoord wordt hiervoor niet apart opgeslagen.
+
 ## Uitnodigen
 
 1. Meld je aan via `/login` met de beheerlogin uit Railway Variables. Zonder ingesteld beheerwachtwoord kun je het eerste beheeraccount via een eenmalige activatielink activeren.

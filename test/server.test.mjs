@@ -50,8 +50,8 @@ async function fixture(extra = {}) {
       async activate(token, name = 'Testgebruiker', password = PASSWORD) {
         return session.request('/api/auth/activate', {method: 'POST', body: {token, name, password}});
       },
-      async login(email = ADMIN_EMAIL, password = PASSWORD) {
-        return session.request('/api/auth/login', {method: 'POST', body: {email, password}});
+      async login(email = ADMIN_EMAIL, password = PASSWORD, rememberMe) {
+        return session.request('/api/auth/login', {method: 'POST', body: {email, password, ...(rememberMe === undefined ? {} : {rememberMe})}});
       },
       async state(companyId = 'c-noord') {
         return session.request(`/api/state?companyId=${encodeURIComponent(companyId)}`);
@@ -878,5 +878,101 @@ test('real small JPEG and WebP images can be uploaded and retrieved without conv
     assert.deepEqual(Buffer.from(downloaded.bytes), Buffer.from(base64, 'base64'));
     assert.equal(JSON.stringify(uploaded.state).includes(base64), false);
     previousUrl = url;
+  }
+});
+
+test('login remembers a session only for an explicit boolean true and validates other types before creating sessions', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  for (const rememberMe of [undefined, false, true]) {
+    const browser = env.client();
+    const response = await browser.login(ADMIN_EMAIL, PASSWORD, rememberMe);
+    accepted(response);
+    const cookie = response.headers.get('set-cookie');
+    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /SameSite=Lax/i);
+    if (rememberMe === true) assert.match(cookie, /(?:^|;)\s*Max-Age=2592000(?:;|$)/i);
+    else assert.doesNotMatch(cookie, /(?:Max-Age|Expires)=/i, 'A normal login must use a browser-session cookie');
+    const stored = databaseSnapshot(env.dataDir).sessions.find(row => row.csrf === browser.csrfToken);
+    assert.ok(stored);
+    assert.equal(stored.expires_at - stored.created_at, rememberMe === true ? 30 * 86400000 : 12 * 3600000);
+    accepted(await browser.action('settings.update', 'c-noord', {cooldownHours: 48}));
+    assert.equal((await browser.action('settings.update', 'c-noord', {cooldownHours: 0}, {csrf: false})).status, 403);
+  }
+  for (const rememberMe of [null, 'true', 1, 0, [], {}]) {
+    const before = databaseSnapshot(env.dataDir);
+    const response = await env.client().login(ADMIN_EMAIL, PASSWORD, rememberMe);
+    assert.equal(response.status, 400, 'A present nonboolean rememberMe must not be coerced');
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+});
+
+test('activation always creates an ordinary twelve-hour session', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const browser = env.client();
+  const response = await browser.request('/api/auth/activate', {method: 'POST', body: {token: env.bootstrapToken, name: 'Geactiveerde gebruiker', password: PASSWORD, rememberMe: true}});
+  accepted(response);
+  assert.doesNotMatch(response.headers.get('set-cookie'), /(?:Max-Age|Expires)=/i);
+  const stored = databaseSnapshot(env.dataDir).sessions.find(row => row.csrf === browser.csrfToken);
+  assert.equal(stored.expires_at - stored.created_at, 12 * 3600000);
+});
+
+test('a remembered session survives a restart and logout revokes it as well as clearing the cookie', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const browser = env.client();
+  accepted(await browser.login(ADMIN_EMAIL, PASSWORD, true));
+  const originalCookie = browser.cookie;
+  const before = databaseSnapshot(env.dataDir).sessions.find(row => row.csrf === browser.csrfToken);
+  await env.restart();
+  assert.equal(accepted(await browser.request('/api/session')).authenticated, true);
+  assert.deepEqual(databaseSnapshot(env.dataDir).sessions.find(row => row.csrf === browser.csrfToken), before);
+  assert.equal((await browser.request('/api/auth/logout', {method: 'POST', body: {}, csrf: false})).status, 403);
+  assert.equal(accepted(await browser.request('/api/session')).authenticated, true);
+  const logout = await browser.request('/api/auth/logout', {method: 'POST', body: {}});
+  accepted(logout);
+  assert.match(logout.headers.get('set-cookie'), /(?:^|;)\s*Max-Age=0(?:;|$)/i);
+  assert.equal(databaseSnapshot(env.dataDir).sessions.some(row => row.csrf === browser.csrfToken), false);
+  const replay = env.client();
+  replay.cookie = originalCookie;
+  assert.equal(accepted(await replay.request('/api/session')).authenticated, false);
+  assert.equal((await replay.state()).status, 401);
+});
+
+test('an expired remembered session is rejected despite retaining its cookie, including after restart', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const browser = env.client();
+  accepted(await browser.login(ADMIN_EMAIL, PASSWORD, true));
+  const setup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  setup.prepare('UPDATE sessions SET expires_at=? WHERE csrf=?').run(Date.now() - 1000, browser.csrfToken);
+  setup.close();
+  assert.equal(accepted(await browser.request('/api/session')).authenticated, false);
+  assert.equal((await browser.state()).status, 401);
+  assert.equal((await browser.action('settings.update', 'c-noord', {cooldownHours: 0})).status, 401);
+  await env.restart();
+  assert.equal(accepted(await browser.request('/api/session')).authenticated, false);
+  assert.equal((await browser.state()).status, 401);
+});
+
+test('ordinary and remembered production sessions retain Secure, HttpOnly and SameSite protections', async t => {
+  const origin = 'https://remembered.example.test';
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD, publicOrigin: origin, secureCookies: true});
+  t.after(() => env.close());
+  for (const rememberMe of [false, true]) {
+    const browser = env.client();
+    const response = await browser.request('/api/auth/login', {method: 'POST', body: {email: ADMIN_EMAIL, password: PASSWORD, rememberMe}, origin});
+    accepted(response);
+    const cookie = response.headers.get('set-cookie');
+    assert.match(cookie, /(?:^|;)\s*Secure(?:;|$)/i);
+    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /SameSite=Lax/i);
+    if (rememberMe) assert.match(cookie, /Max-Age=2592000/i);
+    else assert.doesNotMatch(cookie, /(?:Max-Age|Expires)=/i);
+    const responseState = await browser.request('/api/state?companyId=c-noord', {origin});
+    accepted(responseState);
+    assertNoSecrets(responseState.data.state);
   }
 });

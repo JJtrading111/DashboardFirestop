@@ -11,7 +11,7 @@ const priorityNames={high:'Hoog',medium:'Normaal',low:'Laag'};
 const routes=[['dashboard','Overzicht','grid'],['leads','Alle leads','layers'],['kanban','Kanban','board'],['calls','Bellijst','phone'],['callbacks','Terugbelafspraken','calendar'],['feed','Nieuwsfeed','activity'],['reports','Rapportages','chart'],['sources','Bronnen & koppelingen','link'],['team','Bedrijven & gebruikers','users'],['settings','Instellingen','settings']];
 const icons={grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',layers:'m12 3 9 5-9 5-9-5 9-5 M3 12l9 5 9-5 M3 16l9 5 9-5',board:'M3 4h18v16H3z M9 4v16 M15 4v16 M5.5 8h1 M11.5 8h1 M17.5 8h1',phone:'M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L9 11a16 16 0 0 0 4 4l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z',calendar:'M4 5h16v16H4z M16 3v4 M8 3v4 M4 11h16 M8 15h2 M14 15h2',activity:'M3 12h4l3-8 4 16 3-8h4',chart:'M4 3v17h17 M8 15v-4 M13 15V7 M18 15V4',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',search:'M21 21l-5-5 M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14',plus:'M12 5v14 M5 12h14',bell:'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4',chevron:'m9 5 7 7-7 7',close:'m6 6 12 12 M6 18 18 6',mail:'M3 5h18v14H3z m0 0 9 7 9-7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',check:'m5 12 4 4L19 6',building:'M4 21V3h11v18 M15 10h5v11 M7 7h4 M7 11h4 M7 15h4 M2 21h20',download:'M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5',edit:'m15 4 5 5 M4 20l4-1L21 6l-4-4L4 15z',menu:'M3 6h18 M3 12h18 M3 18h18',shield:'m12 3 9 4v5c0 5-9 9-9 9s-9-4-9-9V7z m-4 9 3 3 5-6',spark:'m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z'};
 const icon=(name)=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.layers}"/></svg>`;
-let state=null,session=null,authError='',authBusy=false,activation=null,activationToken=null,activationInvalid=false;
+let state=null,session=null,authError='',authBusy=false,authRemember=false,activation=null,activationToken=null,activationInvalid=false;
 const initialFragment=new URLSearchParams(location.hash.slice(1));
 if(initialFragment.has('activate')){activationToken=initialFragment.get('activate');initialFragment.delete('activate');history.replaceState(null,'',location.pathname+location.search);}
 let pref;try{pref=JSON.parse(localStorage.getItem(PREF));}catch{}pref||={};
@@ -97,9 +97,18 @@ function showInviteLink(result){
  const inviteUrl=location.origin+'/#activate='+encodeURIComponent(details.token);
  openModal('invite-link',null,{inviteUrl,invitation:details.invitation});
 }
+function passwordField(name,label,activating){
+ const inputId='auth-'+name;
+ return `<div class="field"><label for="${inputId}">${esc(label)}</label><div class="password-field"><input id="${inputId}" name="${name}" type="password" required ${activating?'minlength="12" autocomplete="new-password"':'autocomplete="current-password"'} maxlength="200"><button type="button" class="button ghost password-toggle" data-action="toggle-password" aria-controls="${inputId}" aria-pressed="false" aria-label="${esc(label)} tonen">Tonen</button></div></div>`;
+}
 function authMarkup(){
  const activating=!!activationToken,invalid=activating&&activationInvalid;
- return '<main id="main" class="auth-shell" tabindex="-1"><section class="auth-intro"><div class="brand"><span class="brand-mark">'+icon('building')+'</span><span>Bouwberichten<small>Dashboard</small></span></div></section><section class="auth-card"><span class="badge blue">'+(activating?'Uitnodiging':'Jouw werkplek')+'</span><h1 class="auth-title">'+(activating?'Welkom bij het team':'Log in op je dashboard')+'</h1><p>'+(activating?'Activeer je account met deze persoonlijke uitnodiging.':'Gebruik het e-mailadres en wachtwoord van je geactiveerde account.')+'</p>'+(authError?'<div class="auth-error" role="alert">'+esc(authError)+'</div>':'')+(invalid?'<p>Vraag de beheerder om een nieuwe uitnodigingslink. Een link werkt één keer en heeft een vervaldatum.</p><button class="button secondary" data-action="show-login">Naar inloggen</button>':activating&&!activation?'<p role="status">Uitnodiging controleren…</p>':'<form id="'+(activating?'activation-form':'login-form')+'">'+(activating?'<div class="invitation-summary"><strong>'+esc(activation.companyName)+'</strong><span>'+esc(activation.role)+'</span><span>Geldig tot '+fmt(activation.expiresAt)+'</span></div><label class="field"><span>Je naam</span><input name="name" required maxlength="100" autocomplete="name" value="'+esc(activation.name)+'"></label>':'')+'<label class="field"><span>E-mailadres</span><input name="email" type="email" required maxlength="160" autocomplete="username" '+(activating?'readonly value="'+esc(activation.email)+'"':'')+'></label><label class="field"><span>'+(activating?'Kies een wachtwoord':'Wachtwoord')+'</span><input name="password" type="password" required '+(activating?'minlength="12" autocomplete="new-password"':'autocomplete="current-password"')+' maxlength="200"></label>'+(activating?'<label class="field"><span>Herhaal je wachtwoord</span><input name="passwordConfirm" type="password" required minlength="12" maxlength="200" autocomplete="new-password"></label><p class="muted help-text">Gebruik minimaal 12 tekens. Je account is uitsluitend gekoppeld aan '+esc(activation.companyName)+'.</p>':'<p class="muted help-text">Nog geen account of je wachtwoord vergeten? Vraag je beheerder om hulp.</p>')+'<button type="submit" class="button primary auth-submit" '+(authBusy?'disabled':'')+'>'+(authBusy?'Even geduld…':activating?'Account activeren':'Inloggen')+'</button></form>')+'<div class="auth-bottom">'+icon('shield')+' Alleen toegang na een uitnodiging.</div></section></main>';
+ const intro='<main id="main" class="auth-shell" tabindex="-1"><section class="auth-intro"><div class="brand"><span class="brand-mark">'+icon('building')+'</span><span>Bouwberichten<small>Dashboard</small></span></div></section><section class="auth-card"><span class="badge blue">'+(activating?'Uitnodiging':'Jouw werkplek')+'</span><h1 class="auth-title">'+(activating?'Welkom bij het team':'Log in op je dashboard')+'</h1><p>'+(activating?'Activeer je account met deze persoonlijke uitnodiging.':'Gebruik het e-mailadres en wachtwoord van je geactiveerde account.')+'</p>'+(authError?'<div class="auth-error" role="alert">'+esc(authError)+'</div>':'');
+ let content;
+ if(invalid)content='<p>Vraag de beheerder om een nieuwe uitnodigingslink. Een link werkt één keer en heeft een vervaldatum.</p><button class="button secondary" data-action="show-login">Naar inloggen</button>';
+ else if(activating&&!activation)content='<p role="status">Uitnodiging controleren…</p>';
+ else content='<form id="'+(activating?'activation-form':'login-form')+'">'+(activating?'<div class="invitation-summary"><strong>'+esc(activation.companyName)+'</strong><span>'+esc(activation.role)+'</span><span>Geldig tot '+fmt(activation.expiresAt)+'</span></div><label class="field"><span>Je naam</span><input name="name" required maxlength="100" autocomplete="name" value="'+esc(activation.name)+'"></label>':'')+'<label class="field"><span>E-mailadres</span><input name="email" type="email" required maxlength="160" autocomplete="username" '+(activating?'readonly value="'+esc(activation.email)+'"':'')+'></label>'+passwordField('password',activating?'Kies een wachtwoord':'Wachtwoord',activating)+(activating?passwordField('passwordConfirm','Herhaal je wachtwoord',true)+'<p class="muted help-text">Gebruik minimaal 12 tekens. Je account is uitsluitend gekoppeld aan '+esc(activation.companyName)+'.</p>':'<label class="remember-login"><input name="rememberMe" type="checkbox" value="true" '+(authRemember?'checked':'')+'><span>Aangemeld blijven<small>30 dagen op dit apparaat</small></span></label><p class="muted help-text">Nog geen account of je wachtwoord vergeten? Vraag je beheerder om hulp.</p>')+'<button type="submit" class="button primary auth-submit" '+(authBusy?'disabled':'')+'>'+(authBusy?'Even geduld…':activating?'Account activeren':'Inloggen')+'</button></form>';
+ return intro+content+'<div class="auth-bottom">'+icon('shield')+' Alleen toegang na een uitnodiging.</div></section></main>';
 }
 function renderAuth(){document.body.classList.remove('overlay-open');$('#overlay-root').innerHTML='';$('#toast-root').innerHTML='';$('#app').innerHTML=authMarkup();}
 async function initialize(){
@@ -107,16 +116,16 @@ async function initialize(){
  try{
   if(activationToken){try{const response=await api('/api/invitations/preview',{method:'POST',body:{token:activationToken},publicRequest:true});activation=response.invitation;}catch(error){authError=error.message;activationInvalid=true;}renderAuth();return;}
   session=await api('/api/session',{publicRequest:true});
-  if(location.pathname==='/login'||location.pathname==='/login/'){session=null;renderAuth();}else if(session.authenticated){if(session.user?.role!=='hoofdbeheerder'||!ui.companyId)ui.companyId=session.user.companyId;await refreshState(ui.companyId,{force:true});}else renderAuth();
+  if(session.authenticated){if(location.pathname==='/login'||location.pathname==='/login/')history.replaceState(null,'','/#'+ui.route);if(session.user?.role!=='hoofdbeheerder'||!ui.companyId)ui.companyId=session.user.companyId;await refreshState(ui.companyId,{force:true});}else renderAuth();
  }catch(error){authError=error.message;renderAuth();}
 }
 async function authenticate(form,data){
- const activating=form.id==='activation-form';
+ const activating=form.id==='activation-form';if(!activating)authRemember=data.rememberMe==='true';
  if(activating&&data.password!==data.passwordConfirm)throw Error('De wachtwoorden komen niet overeen.');
  if(activating&&data.password.length<12)throw Error('Gebruik een wachtwoord van minimaal 12 tekens.');
  authBusy=true;authError='';const submit=form.querySelector('[type="submit"]');submit.disabled=true;submit.textContent='Even geduld…';
  try{
-  session=await api(activating?'/api/auth/activate':'/api/auth/login',{method:'POST',body:activating?{token:activationToken,name:data.name,password:data.password}:{email:data.email,password:data.password},publicRequest:true});
+  session=await api(activating?'/api/auth/activate':'/api/auth/login',{method:'POST',body:activating?{token:activationToken,name:data.name,password:data.password}:{email:data.email,password:data.password,rememberMe:authRemember},publicRequest:true});
   activationToken=null;activation=null;authBusy=false;if(location.pathname==='/login'||location.pathname==='/login/')history.replaceState(null,'','/#'+ui.route);ui.companyId=session.user?.companyId||null;ui.drawer=null;ui.modal=null;await refreshState(ui.companyId,{force:true});
  }catch(error){authBusy=false;authError=error.message;renderAuth();}
 }
@@ -209,6 +218,7 @@ document.addEventListener('click',async e=>{
  e.preventDefault();
  try{
   if(a==='show-login'){activationToken=null;activation=null;activationInvalid=false;authError='';await initialize();return;}
+  if(a==='toggle-password'){const input=document.getElementById(target.getAttribute('aria-controls'));if(!input||!target.closest('.password-field')?.contains(input))return;const visible=input.type==='password';input.type=visible?'text':'password';target.textContent=visible?'Verbergen':'Tonen';target.setAttribute('aria-pressed',String(visible));target.setAttribute('aria-label',document.querySelector(`label[for="${input.id}"]`).textContent+(visible?' verbergen':' tonen'));return;}
   if(!state)return;
   switch(a){
    case'menu':ui.mobile=!ui.mobile;$('.sidebar')?.classList.toggle('open',ui.mobile);break;
@@ -237,7 +247,7 @@ document.addEventListener('click',async e=>{
     const field=$('#invite-link');field?.focus();field?.select();
     try{await navigator.clipboard.writeText(ui.modal.inviteUrl);toast('Uitnodigingslink gekopieerd. Deel hem met de ontvanger.');}catch{toast('Selecteer de link en kopieer hem met Ctrl+C.','amber');}break;
    }
-   case'logout':await mutationQueue;refreshVersion++;await api('/api/auth/logout',{method:'POST',body:{}});session=null;state=null;ui.modal=null;ui.drawer=null;authError='';transient=[];renderAuth();break;
+   case'logout':await mutationQueue;refreshVersion++;await api('/api/auth/logout',{method:'POST',body:{}});session=null;state=null;ui.modal=null;ui.drawer=null;authError='';authRemember=false;transient=[];renderAuth();break;
    case'export':exportLeads();break;
    case'export-report':exportReport();break;
    case'reset-report':Object.assign(ui,{reportCompany:'current',reportSeller:'all',reportSource:'all',reportFrom:'',reportTo:''});render();break;
