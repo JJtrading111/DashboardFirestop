@@ -6,6 +6,7 @@ import path from 'node:path';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
+import {deflateSync} from 'node:zlib';
 import {createApp} from '../server.mjs';
 
 const PASSWORD = 'Test-only-password-2026!';
@@ -36,11 +37,12 @@ async function fixture(extra = {}) {
         const response = await fetch(base + route, {method, headers: outgoing, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual'});
         const cookie = response.headers.get('set-cookie');
         if (cookie) session.cookie = cookie.split(';')[0];
-        const text = await response.text();
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const text = new TextDecoder().decode(bytes);
         let data; try {data = JSON.parse(text);} catch {data = null;}
         if (response.ok && data?.csrfToken) session.csrfToken = data.csrfToken;
         if (response.ok && data?.user) session.user = data.user;
-        return {status: response.status, ok: response.ok, data, text, headers: response.headers};
+        return {status: response.status, ok: response.ok, data, text, bytes, headers: response.headers};
       },
       async action(type, companyId, payload = {}, requestOptions = {}) {
         return session.request('/api/action', {method: 'POST', body: {type, companyId, payload}, ...requestOptions});
@@ -87,17 +89,28 @@ function assertNoSecrets(state) {
 function databaseSnapshot(dataDir) {
   const db = new DatabaseSync(path.join(dataDir, 'dashboard.sqlite'));
   try {
-    const optionalRows = table => db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table) ? db.prepare(`SELECT * FROM ${table} ORDER BY id`).all().map(row => ({...row})) : [];
+    const optionalRows = (table, orderBy = 'id') => db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table) ? db.prepare(`SELECT * FROM ${table} ORDER BY ${orderBy}`).all().map(row => ({...row})) : [];
     return {
       state: JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json),
       credentials: db.prepare('SELECT * FROM credentials ORDER BY user_id').all().map(row => ({...row})),
       sessions: db.prepare('SELECT * FROM sessions ORDER BY token_hash').all().map(row => ({...row})),
       invitations: db.prepare('SELECT * FROM invitations ORDER BY id').all().map(row => ({...row})),
       archives: optionalRows('demo_lead_archives'),
-      migrations: optionalRows('app_migrations')
+      migrations: optionalRows('app_migrations'),
+      companyLogos: optionalRows('company_logos', 'company_id')
     };
   } finally {db.close();}
 }
+
+function pngFixture(width = 1, height = 1, variant = false, noisy = false) {
+  const crc32 = bytes => {let crc = 0xffffffff;for (const byte of bytes) {crc ^= byte;for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);}return (crc ^ 0xffffffff) >>> 0;};
+  const chunk = (type, data) => {const label = Buffer.from(type), length = Buffer.alloc(4), checksum = Buffer.alloc(4);length.writeUInt32BE(data.length);checksum.writeUInt32BE(crc32(Buffer.concat([label, data])));return Buffer.concat([length, label, data, checksum]);};
+  const header = Buffer.alloc(13);header.writeUInt32BE(width, 0);header.writeUInt32BE(height, 4);header[8] = 8;header[9] = 6;
+  const stride = width * 4 + 1, pixels = noisy ? randomBytes(stride * height) : Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {pixels[y * stride] = 0;if (!noisy) for (let x = 0; x < width; x++) {const offset = y * stride + 1 + x * 4;pixels[offset] = variant ? 8 : 36;pixels[offset + 1] = variant ? 126 : 93;pixels[offset + 2] = variant ? 115 : 228;pixels[offset + 3] = 255;}}
+  return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
+}
+const asPngDataUrl = bytes => 'data:image/png;base64,' + Buffer.from(bytes).toString('base64');
 
 test('account activation, invitations, company boundaries and persistent shared work', async t => {
   const env = await fixture();
@@ -685,4 +698,185 @@ test('startup cleanup archives, removes and records its marker atomically', asyn
   assert.deepEqual(after.credentials, before.credentials);
   assert.deepEqual(after.sessions, before.sessions);
   assert.equal(accepted(await owner.request('/api/session')).authenticated, true);
+});
+
+test('company names and logos respect roles, preserve history and persist without exposing image data', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client(), seller = env.client(), deltaAdmin = env.client(), anonymous = env.client();
+  accepted(await owner.login());
+  const sellerInvitation = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Logo Verkoper', email: 'logo-seller@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+  accepted(await seller.activate(sellerInvitation.token, 'Logo Verkoper'));
+  const adminInvitation = accepted(await owner.action('invitation.create', 'c-delta', {name: 'Logo Bedrijfsbeheerder', email: 'logo-admin@example.test', companyId: 'c-delta', role: 'bedrijfsbeheerder'})).result;
+  accepted(await deltaAdmin.activate(adminInvitation.token, 'Logo Bedrijfsbeheerder'));
+  accepted(await seller.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Historie mag niet veranderen bij een bedrijfslogo'}));
+  accepted(await owner.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'status', value: 'opvolgen'}));
+  const before = databaseSnapshot(env.dataDir);
+  const originalCompany = before.state.companies.find(company => company.id === 'c-noord');
+  const firstPng = pngFixture(), replacementPng = pngFixture(1, 1, true);
+  let firstLogoUrl, latestLogoUrl;
+
+  await t.test('the head administrator can change a name and upload a real PNG fixture', async () => {
+    const response = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Mijn Bouwbedrijf', logoDataUrl: asPngDataUrl(firstPng)}));
+    const company = response.state.companies.find(company => company.id === 'c-noord');
+    assert.equal(company.name, 'Mijn Bouwbedrijf');
+    assert.equal(company.id, originalCompany.id);
+    assert.deepEqual(company.columns, originalCompany.columns);
+    assert.match(company.logoUrl, /^\/api\/company-logos\/c-noord\?v=.+/);
+    assert.equal(typeof company.logoVersion, 'string');
+    firstLogoUrl = company.logoUrl;
+    assert.equal(response.result.company.logoUrl, firstLogoUrl);
+    assert.equal(JSON.stringify(response.state).includes('data:image/'), false);
+    assert.equal(JSON.stringify(response.state).includes(firstPng.toString('base64')), false);
+    assert.deepEqual(response.state.workspaces, before.state.workspaces);
+    assert.deepEqual(response.state.users, before.state.users);
+    assert.deepEqual(response.state.leads, before.state.leads);
+    const image = await owner.request(firstLogoUrl);
+    assert.equal(image.status, 200);
+    assert.match(image.headers.get('content-type'), /^image\/png(?:;|$)/);
+    assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(image.headers.get('cache-control'), /private|no-store/);
+    assert.deepEqual(Buffer.from(image.bytes), firstPng);
+  });
+
+  await t.test('company administrators edit only their own company and sellers cannot edit branding', async () => {
+    assert.equal((await seller.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Verkoper mag dit niet'})).status, 403);
+    assert.equal((await deltaAdmin.action('company.update', 'c-delta', {companyId: 'c-noord', name: 'Ander bedrijf mag dit niet', logoDataUrl: asPngDataUrl(replacementPng)})).status, 403);
+    const own = accepted(await deltaAdmin.action('company.update', 'c-delta', {companyId: 'c-delta', name: 'Delta Team', logoDataUrl: asPngDataUrl(replacementPng)}));
+    assert.equal(own.state.companies[0].name, 'Delta Team');
+    assert.equal(own.state.companies[0].id, 'c-delta');
+    assert.ok(own.state.companies[0].logoUrl);
+    const foreignByChief = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-delta', name: 'Delta Hoofdkantoor'}));
+    assert.equal(foreignByChief.state.companies.find(company => company.id === 'c-delta').name, 'Delta Hoofdkantoor');
+  });
+
+  await t.test('a case-only rename is allowed for the same company and omitted logos stay unchanged', async () => {
+    const response = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'MIJN BOUWBEDRIJF'}));
+    assert.equal(response.result.company.name, 'MIJN BOUWBEDRIJF');
+    assert.equal(response.result.company.logoUrl, firstLogoUrl);
+    const collisionBefore = databaseSnapshot(env.dataDir);
+    const collision = await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'DELTA HOOFDKANTOOR', logoDataUrl: asPngDataUrl(replacementPng)});
+    assert.equal(collision.status, 409);
+    assert.deepEqual(databaseSnapshot(env.dataDir), collisionBefore, 'An invalid rename must not partially replace the logo or change history');
+    denied(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: ' '}));
+    assert.equal((await owner.action('company.update', 'c-noord', {companyId: 'unknown-company', name: 'Onbekend'})).status, 404);
+  });
+
+  await t.test('logo requests require a session and the correct company', async () => {
+    assert.equal((await anonymous.request(firstLogoUrl)).status, 401);
+    assert.equal((await deltaAdmin.request(firstLogoUrl)).status, 403);
+    const deltaLogo = accepted(await owner.state()).state.companies.find(company => company.id === 'c-delta').logoUrl;
+    assert.equal((await seller.request(deltaLogo)).status, 403);
+    assert.equal((await seller.request(firstLogoUrl)).status, 200);
+    assert.equal((await owner.request('/api/company-logos/unknown-company')).status, 404);
+    assert.equal((await owner.request('/api/company-logos/c-horizon')).status, 404);
+  });
+
+  await t.test('replacing a logo rotates its URL and does not expose old or foreign bytes', async () => {
+    const response = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Mijn Bouwbedrijf', logoDataUrl: asPngDataUrl(replacementPng)}));
+    latestLogoUrl = response.result.company.logoUrl;
+    assert.notEqual(latestLogoUrl, firstLogoUrl);
+    assert.deepEqual(Buffer.from((await seller.request(latestLogoUrl)).bytes), replacementPng);
+    const stale = await owner.request(firstLogoUrl);
+    assert.ok(stale.status === 404 || stale.status === 200);
+    if (stale.status === 200) assert.deepEqual(Buffer.from(stale.bytes), replacementPng, 'An old version URL may only resolve to the replacement, never retained old bytes');
+    assert.equal((await deltaAdmin.request(latestLogoUrl)).status, 403);
+    assert.equal(databaseSnapshot(env.dataDir).companyLogos.filter(row => row.company_id === 'c-noord').length, 1);
+    const state = accepted(await owner.state()).state;
+    assert.deepEqual(state.workspaces, before.state.workspaces);
+    assert.deepEqual(state.users, before.state.users);
+    assert.deepEqual(state.companies.find(company => company.id === 'c-noord').columns, originalCompany.columns);
+  });
+
+  await t.test('the name and logo survive restart and null removes only that company logo', async () => {
+    const storedBefore = databaseSnapshot(env.dataDir);
+    await env.restart();
+    const state = accepted(await owner.state()).state;
+    const company = state.companies.find(company => company.id === 'c-noord');
+    assert.equal(company.name, 'Mijn Bouwbedrijf');
+    assert.equal(company.logoUrl, latestLogoUrl);
+    assert.deepEqual(Buffer.from((await seller.request(latestLogoUrl)).bytes), replacementPng);
+    assert.deepEqual(databaseSnapshot(env.dataDir).companyLogos, storedBefore.companyLogos);
+    const removed = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Mijn Bouwbedrijf', logoDataUrl: null}));
+    assert.equal(removed.result.company.logoUrl, null);
+    assert.equal(removed.result.company.logoVersion, null);
+    assert.equal((await owner.request(latestLogoUrl)).status, 404);
+    const logos = databaseSnapshot(env.dataDir).companyLogos;
+    assert.equal(logos.filter(row => row.company_id === 'c-noord').length, 0);
+    assert.equal(logos.filter(row => row.company_id === 'c-delta').length, 1);
+    assert.deepEqual(removed.state.workspaces, before.state.workspaces);
+    assert.deepEqual(removed.state.users, before.state.users);
+  });
+});
+
+test('company logo validation and upload body limits reject unsafe content atomically', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  const png = pngFixture(), pngUrl = asPngDataUrl(png);
+  accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Bewaard bedrijf', logoDataUrl: pngUrl}));
+  const base64 = png.toString('base64'), alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  assert.ok(padding > 0, 'The PNG fixture must exercise canonical base64 padding');
+  const index = base64.length - padding - 1, alteredBase64 = base64.slice(0, index) + alphabet[alphabet.indexOf(base64[index]) + 1] + base64.slice(index + 1);
+  assert.deepEqual(Buffer.from(alteredBase64, 'base64'), png, 'Noncanonical base64 fixture must decode to the original bytes');
+  const invalid = [
+    ['remote URL', 'https://untrusted.example/logo.png'],
+    ['SVG', 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>').toString('base64')],
+    ['MIME/signature mismatch', 'data:image/jpeg;base64,' + base64],
+    ['invalid PNG signature', 'data:image/png;base64,' + Buffer.from('This is not an image').toString('base64')],
+    ['truncated PNG', asPngDataUrl(png.subarray(0, 33))],
+    ['oversized dimensions', asPngDataUrl(pngFixture(2049, 1))],
+    ['noncanonical padding bits', 'data:image/png;base64,' + alteredBase64],
+    ['missing padding', 'data:image/png;base64,' + base64.replace(/=+$/, '')],
+    ['embedded whitespace', 'data:image/png;base64,' + base64.slice(0, 16) + '\n' + base64.slice(16)],
+    ['boolean value', false],
+    ['object value', {url: pngUrl}]
+  ];
+  for (const [label, logoDataUrl] of invalid) {
+    const before = databaseSnapshot(env.dataDir);
+    const response = await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Dit mag niet gedeeltelijk worden opgeslagen', logoDataUrl});
+    assert.equal(response.status, 400, label);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before, `${label} must not change the old name, image or history`);
+  }
+  const oversizedPng = pngFixture(256, 256, false, true);
+  assert.ok(oversizedPng.length > 256 * 1024);
+  const sizeBefore = databaseSnapshot(env.dataDir);
+  assert.equal((await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Te groot', logoDataUrl: asPngDataUrl(oversizedPng)})).status, 413);
+  assert.deepEqual(databaseSnapshot(env.dataDir), sizeBefore);
+  const largerThan64KiB = pngFixture(128, 128, false, true);
+  assert.ok(largerThan64KiB.length > 64 * 1024 && largerThan64KiB.length < 256 * 1024);
+  const acceptedLarge = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Groter geldig logo', logoDataUrl: asPngDataUrl(largerThan64KiB)}));
+  assert.deepEqual(Buffer.from((await owner.request(acceptedLarge.result.company.logoUrl)).bytes), largerThan64KiB);
+  const beforeBodyLimit = databaseSnapshot(env.dataDir);
+  assert.equal((await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Te groot verzoek', logoDataUrl: 'data:image/png;base64,' + 'A'.repeat(400 * 1024)})).status, 413);
+  assert.deepEqual(databaseSnapshot(env.dataDir), beforeBodyLimit);
+  const oversizedLogin = await env.client().request('/api/auth/login', {method: 'POST', body: {email: ADMIN_EMAIL, password: PASSWORD, extra: 'x'.repeat(70 * 1024)}});
+  assert.equal(oversizedLogin.status, 413, 'Auth endpoints must retain their smaller 64 KiB request limit');
+});
+
+test('real small JPEG and WebP images can be uploaded and retrieved without conversion', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  // Complete 2x2 RGB images generated and independently decoded with Pillow.
+  // Fixtures are embedded so this test has no image-library dependency.
+  const images = [
+    ['image/jpeg', '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDhKKKK/ez4E//Z'],
+    ['image/webp', 'UklGRj4AAABXRUJQVlA4IDIAAADwAQCdASoCAAIAAQAcJaACdLoB+AAETAAA/vD6K/+JC/EhfiQv/Cmv/PzO7cX85gAAAA==']
+  ];
+  let previousUrl;
+  for (const [mime, base64] of images) {
+    const uploaded = accepted(await owner.action('company.update', 'c-noord', {companyId: 'c-noord', name: 'Logoformaat getest', logoDataUrl: `data:${mime};base64,${base64}`}));
+    const url = uploaded.result.company.logoUrl;
+    assert.notEqual(url, previousUrl);
+    const downloaded = await owner.request(url);
+    assert.equal(downloaded.status, 200);
+    assert.equal(downloaded.headers.get('content-type'), mime);
+    assert.equal(downloaded.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(downloaded.bytes), Buffer.from(base64, 'base64'));
+    assert.equal(JSON.stringify(uploaded.state).includes(base64), false);
+    previousUrl = url;
+  }
 });

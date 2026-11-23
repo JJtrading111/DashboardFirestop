@@ -58,3 +58,34 @@
 .kanban-date{display:flex;align-items:center;gap:7px;padding:8px 9px;margin:12px 0;background:#f0f4fa;border-radius:6px;font-size:14px;line-height:1.5;color:#34557b}
 .kanban-date svg{width:16px;height:16px}
 .kanban-date.overdue{background:#fff3dc;color:#8c671f}
+/* Company identity and logo editing. */
+.company-card>.company-card-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 calc(100% - 53px);margin-left:53px;min-width:0}
+.company-card-actions .button{font-size:14px;min-height:34px;padding:7px 10px}
+.company-logo.has-image{background:#fff!important;border:1px solid #d8e2ee;padding:4px;overflow:hidden}
+.company-logo-image,.company-logo.has-image img{display:block;width:100%;height:100%;max-width:100%;object-fit:contain}
+.sidebar .brand>span:last-child{min-width:0;flex:1;overflow-wrap:anywhere}
+.sidebar .brand-mark.has-company-logo{width:56px;height:46px;background:#fff;color:#17283b;border:1px solid #ffffff80;padding:5px;box-shadow:none;overflow:hidden}
+.brand-mark .dashboard-company-logo{display:block;width:100%;height:100%;max-width:100%;object-fit:contain}
+.brand-mark .dashboard-company-logo img{display:block;width:100%;height:100%;object-fit:contain}
+.sidebar .brand small{overflow-wrap:normal}
+.company-logo-editor{display:flex;align-items:flex-start;gap:20px;padding:18px;border:1px solid #dce5f0;border-radius:11px;background:#f7f9fd;margin:20px 0}
+.company-logo-preview{width:112px;height:112px;flex:0 0 112px;display:grid;place-items:center;padding:10px;overflow:hidden;border:1px solid #cfdae8;border-radius:10px;background:#fff;color:#345d91;font-size:30px;font-weight:700;line-height:1;box-shadow:0 2px 7px #17324f06}
+.company-logo-preview img{display:block;width:100%;height:100%;max-width:100%;object-fit:contain}
+.company-logo-controls{display:flex;flex-direction:column;align-items:flex-start;gap:10px;flex:1;min-width:0}
+.company-logo-controls>.field{width:100%;margin:0}
+.company-logo-controls .button{font-size:14px;white-space:normal;text-align:center}
+.logo-upload-label{display:inline-flex;align-items:center;gap:8px;border:1px solid #cfdae8;border-radius:7px;background:#fff;color:#344e6b;font-size:14px;font-weight:600;line-height:1.5;padding:8px 11px;cursor:pointer;max-width:100%}
+.logo-upload-label:hover{background:#edf3fb;border-color:#a7bdd8}
+.logo-upload-label:focus-within{outline:3px solid #67a7ff;outline-offset:3px}
+.modal input.logo-file-input{width:100%;max-width:100%;min-height:42px;padding:6px;font-size:14px;line-height:1.6;color:#405c7b;background:#fff;overflow:hidden;text-overflow:ellipsis}
+.logo-file-input::file-selector-button{font:inherit;font-size:14px;font-weight:600;line-height:1.5;color:#2859aa;background:#edf3ff;border:1px solid #cbdcf9;border-radius:5px;padding:6px 10px;margin-right:9px;cursor:pointer}
+.logo-file-input::file-selector-button:hover{background:#e0ebff}
+.logo-upload-note{font-size:14px!important;line-height:1.6!important;color:#586f89!important;margin:0!important;overflow-wrap:anywhere}
+.company-logo-status{font-size:15px;line-height:1.6;margin:0;color:#983d32;overflow-wrap:anywhere}
+.company-logo-status[role=status]{color:#405f7f}
+.company-logo-status:empty{display:none}
+@media(max-width:700px){.company-card>.company-card-actions{gap:7px}.company-card-actions .button{font-size:14px}.company-logo-editor{padding:15px;gap:16px}.sidebar .brand-mark.has-company-logo{width:50px;height:43px}}
+@media(max-width:500px){.company-logo-editor{flex-direction:column;align-items:stretch}.company-logo-preview{align-self:center}.company-logo-controls{align-items:stretch}.company-logo-controls .button{align-self:flex-start}.company-card>.company-card-actions{flex-basis:100%;margin-left:0}.company-card-actions .button{flex:1;min-width:0}.logo-file-input::file-selector-button{padding:6px 8px;margin-right:6px}}
+.workspace-company-logo{display:block;width:auto;max-width:80px;height:32px;object-fit:contain;flex:0 1 auto;min-width:0;padding:4px;background:#fff;border:1px solid #e1e8f1;border-radius:5px}
+@media(max-width:700px){.workspace-company-logo{max-width:40px;height:28px;padding:3px}.top-actions:has(.workspace-company-logo){gap:7px;min-width:0}.top-actions:has(.workspace-company-logo) .company-switch{min-width:0;width:auto;max-width:min(180px,calc(100vw - 151px));flex:0 1 180px}}
+@media(max-width:400px){.top-actions:has(.workspace-company-logo){gap:5px}.top-actions:has(.workspace-company-logo) .company-switch{max-width:calc(100vw - 145px);flex-basis:145px}}

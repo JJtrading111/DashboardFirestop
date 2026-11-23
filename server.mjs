@@ -20,6 +20,46 @@ const text=(v,label,max=200,min=1)=>{if(typeof v!=='string'||v.trim().length<min
 const emailValue=v=>{const email=text(v,'E-mailadres',254).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Vul een geldig e-mailadres in.');return email;};
 const tokenValue=v=>{if(typeof v!=='string'||!/^[A-Za-z0-9_-]{32,128}$/.test(v))fail(400,'Deze uitnodigingslink is ongeldig.');return v;};
 const publicUser=u=>({id:u.id,name:u.name,email:u.email,companyId:u.companyId,role:u.role,status:u.status});
+const MAX_LOGO_BYTES=256*1024,MAX_LOGO_DIMENSION=2048;
+function logoDimensions(bytes,mime){
+ if(mime==='image/png'){
+  if(bytes.length<45||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||bytes.readUInt32BE(8)!==13||bytes.toString('ascii',12,16)!=='IHDR')return null;
+  const width=bytes.readUInt32BE(16),height=bytes.readUInt32BE(20);let offset=8,hasPixels=false,hasEnd=false;
+  while(offset+12<=bytes.length){const length=bytes.readUInt32BE(offset),kind=bytes.toString('ascii',offset+4,offset+8);if(length>bytes.length-offset-12||!/^[A-Za-z]{4}$/.test(kind))return null;if(kind==='IDAT'&&length>0)hasPixels=true;offset+=length+12;if(kind==='IEND'){if(length!==0||offset!==bytes.length)return null;hasEnd=true;break;}}
+  return hasPixels&&hasEnd?{width,height}:null;
+ }
+ if(mime==='image/jpeg'){
+  if(bytes.length<12||bytes[0]!==255||bytes[1]!==216||bytes[bytes.length-2]!==255||bytes[bytes.length-1]!==217)return null;
+  const frames=new Set([192,193,194,195,197,198,199,201,202,203,205,206,207]);let offset=2,frame=null;
+  while(offset<bytes.length-2){if(bytes[offset++]!==255)return null;while(offset<bytes.length&&bytes[offset]===255)offset++;const marker=bytes[offset++];if(marker===217)return null;if(marker===1||marker>=208&&marker<=215)continue;if(offset+2>bytes.length)return null;const length=bytes.readUInt16BE(offset);if(length<2||length>bytes.length-offset)return null;if(marker===218)return frame&&length>=6&&bytes.length-offset-length>2?frame:null;if(frames.has(marker)){if(length<8||frame)return null;frame={width:bytes.readUInt16BE(offset+5),height:bytes.readUInt16BE(offset+3)};}offset+=length;}
+  return null;
+ }
+ if(mime==='image/webp'){
+  if(bytes.length<26||bytes.toString('ascii',0,4)!=='RIFF'||bytes.toString('ascii',8,12)!=='WEBP'||bytes.readUInt32LE(4)+8!==bytes.length)return null;
+  let offset=12,canvas=null,frame=null;
+  while(offset+8<=bytes.length){const kind=bytes.toString('ascii',offset,offset+4),length=bytes.readUInt32LE(offset+4),start=offset+8;if(length>bytes.length-start)return null;
+   if(kind==='VP8X'){if(length!==10)return null;canvas={width:bytes.readUIntLE(start+4,3)+1,height:bytes.readUIntLE(start+7,3)+1};}
+   else if(kind==='VP8 '){if(length<10||bytes[start]&1||!bytes.subarray(start+3,start+6).equals(Buffer.from([157,1,42])))return null;frame={width:bytes.readUInt16LE(start+6)&16383,height:bytes.readUInt16LE(start+8)&16383};}
+   else if(kind==='VP8L'){if(length<5||bytes[start]!==47)return null;frame={width:1+((bytes[start+1]|bytes[start+2]<<8)&16383),height:1+((bytes[start+2]>>6|bytes[start+3]<<2|bytes[start+4]<<10)&16383)};}
+   else if(kind==='ANIM'||kind==='ANMF')return null;
+   offset=start+length+(length%2);
+  }
+  if(offset!==bytes.length||!frame||canvas&&(canvas.width!==frame.width||canvas.height!==frame.height))return null;
+  return canvas||frame;
+ }
+ return null;
+}
+function decodeCompanyLogo(value){
+ if(typeof value!=='string')fail(400,'Kies een geldig PNG-, JPEG- of WebP-logo.');
+ if(value.length>Math.ceil(MAX_LOGO_BYTES/3)*4+64)fail(413,'Het logo is te groot. Gebruik een afbeelding van maximaal 256 kB.');
+ const match=/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+ if(!match||match[2].length%4!==0)fail(400,'Kies een geldig PNG-, JPEG- of WebP-logo.');
+ const bytes=Buffer.from(match[2],'base64');if(bytes.length>MAX_LOGO_BYTES)fail(413,'Het logo is te groot. Gebruik een afbeelding van maximaal 256 kB.');
+ if(bytes.toString('base64')!==match[2])fail(400,'Het logo bevat ongeldige afbeeldingsgegevens.');
+ const dimensions=logoDimensions(bytes,match[1]);
+ if(!dimensions||dimensions.width<1||dimensions.height<1||dimensions.width>MAX_LOGO_DIMENSION||dimensions.height>MAX_LOGO_DIMENSION)fail(400,'Gebruik een geldig logo van maximaal 2048 bij 2048 pixels.');
+ return{mime:match[1],bytes};
+}
 async function passwordHash(password){if(typeof password!=='string'||password.length<12||password.length>256)fail(400,'Gebruik een wachtwoord van minimaal 12 en maximaal 256 tekens.');const salt=randomBytes(16).toString('hex');const hash=await scrypt(password,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024});return `${salt}:${Buffer.from(hash).toString('hex')}`;}
 async function passwordMatches(password,stored){if(typeof password!=='string'||password.length>256)return false;const [salt,expected]=String(stored||'').split(':');const actual=await scrypt(password,salt||'invalid-password-salt',64,{N:32768,r:8,p:1,maxmem:64*1024*1024});const expectedBytes=expected?Buffer.from(expected,'hex'):Buffer.alloc(64);return expectedBytes.length===actual.length&&timingSafeEqual(expectedBytes,actual)&&!!stored;}
 
@@ -45,6 +85,7 @@ export function createApp(options={}){
  CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,csrf TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS demo_lead_archives(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,actor_id TEXT NOT NULL,json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS app_migrations(id TEXT PRIMARY KEY,applied_at TEXT NOT NULL,result_json TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS company_logos(company_id TEXT PRIMARY KEY,mime TEXT NOT NULL,bytes BLOB NOT NULL,version TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
  CREATE INDEX IF NOT EXISTS invitations_email ON invitations(email);`);
  const readState=()=>JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json);
@@ -177,6 +218,18 @@ export function createApp(options={}){
    case'lead.create':{const source=p.source;if(!['bouw','hotels','vve'].includes(source))fail(400,'Kies een geldige broncategorie.');const now=iso(Date.now()),lead={id:id('lead'),title:text(p.title,'Projectnaam',150),organization:text(p.organization,'Organisatie',120),city:text(p.city,'Plaats',100),source,contact:text(p.contact,'Contactpersoon',100),phone:text(p.phone,'Telefoonnummer',30),email:emailValue(p.email),description:text(p.description,'Projectomschrijving',3000),phase:'Oriëntatie',budget:'Nog niet bekend',createdAt:now,updatedAt:now,tags:['Handmatig toegevoegd'],demo:false};if(!/^[+\d ()-]{6,30}$/.test(lead.phone))fail(400,'Vul een geldig telefoonnummer in.');s.leads.unshift(lead);const w=getWorkspace(s,cid,lead.id);w.ownerId=actor.companyId===cid?actor.id:null;if(p.status){if(!company.columns.some(c=>c.id===p.status))fail(400,'Kies een geldige Kanban-status.');w.status=p.status;}s.feed.unshift({id:id('feed'),companyId:null,leadId:lead.id,type:'new',text:`Nieuwe centrale lead: ${lead.title}`,authorName:'Handmatig toegevoegd',at:now});result={lead,leadId:lead.id};break;}
    case'columns.update':{requireManager(actor,cid);if(!Array.isArray(p.columns)||p.columns.length!==company.columns.length||p.columns.length>30)fail(400,'Behoud de bestaande kolommen.');const next=p.columns.map(c=>({id:c.id,name:text(c.name,'Kolomnaam',35)}));if(next.some(c=>!company.columns.some(old=>old.id===c.id))||new Set(next.map(c=>c.id)).size!==next.length)fail(400,'De kolomindeling is ongeldig.');if(p.newColumn){if(next.length>=30)fail(400,'Gebruik maximaal 30 kolommen.');next.push({id:id('col'),name:text(p.newColumn,'Nieuwe kolom',35)});}if(new Set(next.map(c=>c.name.toLowerCase())).size!==next.length)fail(400,'Gebruik verschillende kolomnamen.');company.columns=next;addFeed(s,actor,cid,'Kanban-kolommen bijgewerkt');break;}
    case'company.create':{requireChief(actor);const name=text(p.name,'Bedrijfsnaam',120);if(s.companies.some(c=>c.name.toLowerCase()===name.toLowerCase()))fail(409,'Dit bedrijf bestaat al.');const c={id:id('company'),name,initials:name.split(/\s+/).map(x=>x[0]).slice(0,2).join('').toUpperCase(),color:'#dce8ff',columns:[{id:'nieuw',name:'Nieuw'},{id:'contact',name:'In contact'},{id:'opvolgen',name:'Opvolgen'},{id:'offerte',name:'Offerte'},{id:'afgerond',name:'Afgerond'}]};s.companies.push(c);s.workspaces[c.id]={};result={company:c};break;}
+   case'company.update':{
+    const targetId=text(p.companyId,'Bedrijf',100);requireManager(actor,targetId);const target=requireCompany(s,targetId),name=text(p.name,'Bedrijfsnaam',120);
+    if(s.companies.some(c=>c.id!==targetId&&c.name.toLowerCase()===name.toLowerCase()))fail(409,'Dit bedrijf bestaat al.');
+    const changesLogo=Object.prototype.hasOwnProperty.call(p,'logoDataUrl');let logo;
+    if(changesLogo&&p.logoDataUrl!==null&&p.logoDataUrl!=='')logo=decodeCompanyLogo(p.logoDataUrl);
+    target.name=name;target.initials=name.split(/\s+/).map(word=>Array.from(word)[0]).slice(0,2).join('').toUpperCase();
+    if(changesLogo){
+     if(logo){const version=randomUUID();db.prepare('INSERT INTO company_logos(company_id,mime,bytes,version) VALUES(?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET mime=excluded.mime,bytes=excluded.bytes,version=excluded.version').run(targetId,logo.mime,logo.bytes,version);target.logoVersion=version;target.logoUrl='/api/company-logos/'+encodeURIComponent(targetId)+'?v='+version;}
+     else{db.prepare('DELETE FROM company_logos WHERE company_id=?').run(targetId);target.logoVersion=null;target.logoUrl=null;}
+    }
+    addFeed(s,actor,targetId,`Bedrijfsgegevens bijgewerkt: ${target.name}`);result={company:target};break;
+   }
    case'user.update':{const target=s.users.find(u=>u.id===p.userId);if(!target)fail(404,'Deze gebruiker bestaat niet.');if(adminPassword&&target.id==='u-admin'&&p.role!=='hoofdbeheerder')fail(400,'Dit beheeraccount moet hoofdbeheerder blijven.');if(!roles.includes(p.role))fail(400,'Kies een geldige rol.');requireCompany(s,p.companyId);if(actor.role!=='hoofdbeheerder'){requireManager(actor,target.companyId);if(p.companyId!==actor.companyId||target.role==='hoofdbeheerder'||p.role==='hoofdbeheerder')fail(403,'Je kunt alleen rollen binnen je eigen bedrijf beheren.');}if(target.role==='hoofdbeheerder'&&p.role!=='hoofdbeheerder'&&s.users.filter(u=>u.role==='hoofdbeheerder'&&u.status==='actief').length===1)fail(400,'Er moet minimaal één actieve hoofdbeheerder blijven.');transferUser(s,target.id,p.companyId);target.role=p.role;db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);addFeed(s,actor,cid,`Gebruiker bijgewerkt: ${target.name}`);break;}
    case'source.update':{requireChief(actor);const source=s.sources.find(x=>x.id===p.id);if(!source||source.id==='outlook')fail(400,'Deze bron kan niet worden aangepast.');let url='';if(p.url){try{const parsed=new URL(text(p.url,'Bron-URL',500));if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password||parsed.search||parsed.hash)throw Error();url=parsed.href;}catch{fail(400,'Gebruik een http(s)-URL zonder inloggegevens, tokens of queryparameters.');}}source.url=url;source.username=typeof p.username==='string'?text(p.username||' ','Gebruikersnaam',160,0):'';source.enabled=false;break;}
    case'settings.update':{requireChief(actor);if(!Number.isInteger(p.cooldownHours)||p.cooldownHours<0||p.cooldownHours>8760)fail(400,'Gebruik een geheel aantal uren tussen 0 en 8760.');s.settings.cooldownHours=p.cooldownHours;addFeed(s,actor,cid,`Globale belwachttijd ingesteld op ${p.cooldownHours} uur`);break;}
@@ -191,13 +244,20 @@ export function createApp(options={}){
  const contentTypes={'.html':'text/html; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
  function headers(res,isApi=false){res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");res.setHeader('Cache-Control',isApi?'no-store':'no-cache');if(secureCookies)res.setHeader('Strict-Transport-Security','max-age=31536000');}
  function json(res,status,data){headers(res,true);res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
- async function body(req){if(!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))fail(415,'Gebruik een JSON-verzoek.');let size=0,data='';for await(const chunk of req){size+=chunk.length;if(size>65536)fail(413,'Dit verzoek is te groot.');data+=chunk;}let parsed;try{parsed=JSON.parse(data||'{}');}catch{fail(400,'Het verzoek bevat ongeldige gegevens.');}if(!parsed||Array.isArray(parsed)||typeof parsed!=='object')fail(400,'Het verzoek bevat ongeldige gegevens.');return parsed;}
+ async function body(req,maxBytes=65536){if(!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))fail(415,'Gebruik een JSON-verzoek.');let size=0,data='';for await(const chunk of req){size+=chunk.length;if(size>maxBytes)fail(413,'Dit verzoek is te groot.');data+=chunk;}let parsed;try{parsed=JSON.parse(data||'{}');}catch{fail(400,'Het verzoek bevat ongeldige gegevens.');}if(!parsed||Array.isArray(parsed)||typeof parsed!=='object')fail(400,'Het verzoek bevat ongeldige gegevens.');return parsed;}
  const handler=async(req,res)=>{try{
   const url=new URL(req.url,'http://localhost');
   if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true});
   if(url.pathname.startsWith('/api/')){
    headers(res,true);const ip=req.socket.remoteAddress||'unknown';
    if(req.method==='GET'&&url.pathname==='/api/session'){const session=cookieSession(req);return json(res,200,session?sessionBody(session):{authenticated:false});}
+   if(['GET','HEAD'].includes(req.method)&&url.pathname.startsWith('/api/company-logos/')){
+    const session=authorized(req);let companyId;try{companyId=decodeURIComponent(url.pathname.slice('/api/company-logos/'.length));}catch{fail(404,'Dit logo bestaat niet.');}
+    if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(companyId))fail(404,'Dit logo bestaat niet.');
+    if(session.user.role!=='hoofdbeheerder'&&session.user.companyId!==companyId)fail(403,'Je kunt alleen het logo van je eigen bedrijf openen.');
+    requireCompany(readState(),companyId);const logo=db.prepare('SELECT mime,bytes FROM company_logos WHERE company_id=?').get(companyId);if(!logo)fail(404,'Dit bedrijf heeft nog geen logo.');
+    const bytes=Buffer.from(logo.bytes);headers(res,true);res.setHeader('Cache-Control','private, no-store');res.writeHead(200,{'Content-Type':logo.mime,'Content-Length':bytes.length});res.end(req.method==='HEAD'?undefined:bytes);return;
+   }
    if(req.method==='GET'&&url.pathname==='/api/state'){const session=authorized(req),s=readState();return json(res,200,scoped(s,session.user,url.searchParams.get('companyId')||session.user.companyId));}
    if(req.method!=='POST')fail(405,'Deze methode is niet toegestaan.');checkOrigin(req);
    if(url.pathname==='/api/auth/login'){
@@ -209,7 +269,7 @@ export function createApp(options={}){
     const session=transaction(()=>{const row=invitationByToken(p.token),s=readState();if(db.prepare('SELECT user_id FROM credentials WHERE email=?').get(row.email))fail(409,'Dit account is al actief. Meld je aan.');requireCompany(s,row.company_id);let user=row.user_id?s.users.find(u=>u.id===row.user_id):null;if(!user){if(s.users.some(u=>u.email.toLowerCase()===row.email))fail(409,'Dit e-mailadres heeft al een account.');user={id:id('user'),email:row.email,companyId:row.company_id,role:row.role,status:'actief',name};s.users.push(user);}else{if(user.status==='actief')fail(409,'Dit account is al actief.');Object.assign(user,{name,email:row.email,companyId:row.company_id,role:row.role,status:'actief'});}db.prepare('INSERT INTO credentials(user_id,email,password_hash) VALUES(?,?,?)').run(user.id,user.email,hashed);db.prepare("UPDATE invitations SET status='accepted' WHERE id=?").run(row.id);writeState(s);return newSession(user);});setCookie(res,session.raw);return json(res,200,sessionBody(session));
    }
    if(url.pathname==='/api/auth/logout'){const session=authorized(req);csrf(req,session);db.prepare('DELETE FROM sessions WHERE token_hash=?').run(session.token_hash);setCookie(res,'',true);return json(res,200,{authenticated:false});}
-   if(url.pathname==='/api/action'){const session=authorized(req);csrf(req,session);rate(`action:${session.user.id}`,300,60000);const p=await body(req);if(typeof p.type!=='string'||typeof p.companyId!=='string'||!p.payload||typeof p.payload!=='object'||Array.isArray(p.payload))fail(400,'Dit verzoek bevat ongeldige gegevens.');if(p.type.startsWith('invitation.'))rate(`invite:${session.user.id}`,40);return json(res,200,action(session.user,p.type,p.companyId,p.payload));}
+   if(url.pathname==='/api/action'){const session=authorized(req);csrf(req,session);rate(`action:${session.user.id}`,300,60000);const p=await body(req,384*1024);if(typeof p.type!=='string'||typeof p.companyId!=='string'||!p.payload||typeof p.payload!=='object'||Array.isArray(p.payload))fail(400,'Dit verzoek bevat ongeldige gegevens.');if(p.type.startsWith('invitation.'))rate(`invite:${session.user.id}`,40);return json(res,200,action(session.user,p.type,p.companyId,p.payload));}
    fail(404,'Deze functie bestaat niet.');
   }
   if(!['GET','HEAD'].includes(req.method))fail(405,'Deze methode is niet toegestaan.');const asset=assets.get(url.pathname);if(!asset)fail(404,'Deze pagina bestaat niet.');headers(res);res.writeHead(200,{'Content-Type':contentTypes[path.extname(asset)]});res.end(req.method==='HEAD'?undefined:readFileSync(path.join(ROOT,'public',asset)));

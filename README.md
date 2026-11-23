@@ -14,6 +14,14 @@ Open een lead door op de hele Kanban-kaart te klikken, of gebruik Enter of de sp
 
 Een nieuwe link maken maakt de vorige link ongeldig. Een uitnodiging kan ook worden ingetrokken. Bedrijfsbeheerders beheren uitnodigingen voor het eigen bedrijf; alleen de hoofdbeheerder kan een hoofdbeheerder uitnodigen of mensen naar een ander bedrijf overplaatsen. Bestaande gespreksgeschiedenis blijft bij het oorspronkelijke bedrijf.
 
+## Bedrijfsnaam en logo
+
+Open **Bedrijven & mensen → Bewerken** om een bedrijfsnaam aan te passen, een logo te uploaden of het bestaande logo te verwijderen. De hoofdbeheerder kan ieder bedrijf bewerken; een bedrijfsbeheerder alleen het eigen bedrijf. Verkopers zien geen bewerkknop.
+
+De upload accepteert PNG, JPEG en WebP tot 5 MB. De browser verkleint de afbeelding automatisch voor opslag. Het opgeslagen logo verschijnt op de bedrijfskaart, in de zijbalk en in de bovenbalk van de eigen werkplek, ook na opnieuw inloggen. Zonder logo verschijnen de bedrijfsinitialen. Een naamswijziging behoudt gebruikers, Kanban-kolommen en geschiedenis.
+
+Logo's staan als binaire afbeeldingen in de SQLite-database op het persistente volume. Alleen aangemelde gebruikers van het betreffende bedrijf en de hoofdbeheerder kunnen ze opvragen. De server controleert formaat, afmetingen en bestandsgrootte; afbeeldingen van externe URL's en SVG-bestanden worden niet geaccepteerd.
+
 ## Railway
 
 De app draait als één Node.js 24-service met de meegeleverde Dockerfile. Mount een persistent Railway-volume op `/data`. De SQLite-database, wachtwoordhashes, sessies en uitnodigingshashes staan op dat volume, buiten de broncode.
