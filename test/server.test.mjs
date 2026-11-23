@@ -976,3 +976,81 @@ test('ordinary and remembered production sessions retain Secure, HttpOnly and Sa
     assertNoSecrets(responseState.data.state);
   }
 });
+
+test('global call-wait settings keep canonical hours and persist the selected hours or days unit', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  let response = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 24}));
+  assert.equal(response.state.settings.cooldownHours, 24);
+  assert.equal(response.state.settings.cooldownUnit, 'hours', 'Legacy settings without a unit must default to hours');
+  response = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 48, cooldownUnit: 'days'}));
+  assert.equal(response.state.settings.cooldownHours, 48, 'Two days must stay 48 canonical hours');
+  assert.equal(response.state.settings.cooldownUnit, 'days');
+  response = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 72}));
+  assert.equal(response.state.settings.cooldownHours, 72);
+  assert.equal(response.state.settings.cooldownUnit, 'days', 'Omitting the unit must preserve the current valid unit');
+  await env.restart();
+  let settings = accepted(await owner.state()).state.settings;
+  assert.equal(settings.cooldownHours, 72);
+  assert.equal(settings.cooldownUnit, 'days');
+  response = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 48, cooldownUnit: 'hours'}));
+  assert.equal(response.state.settings.cooldownHours, 48);
+  assert.equal(response.state.settings.cooldownUnit, 'hours');
+  response = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 8760, cooldownUnit: 'days'}));
+  assert.equal(response.state.settings.cooldownHours, 365 * 24, '365 days must remain within the 8760-hour ceiling');
+  assert.equal(response.state.settings.cooldownUnit, 'days');
+  await env.restart();
+  settings = accepted(await owner.state()).state.settings;
+  assert.equal(settings.cooldownHours, 8760);
+  assert.equal(settings.cooldownUnit, 'days');
+  response = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 0, cooldownUnit: 'days'}));
+  assert.equal(response.state.settings.cooldownHours, 0);
+  assert.equal(response.state.settings.cooldownUnit, 'days');
+});
+
+test('invalid call-wait units or noncanonical hour values are rejected without writes', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 48, cooldownUnit: 'days'}));
+  for (const cooldownUnit of [null, true, 1, 'weeks', 'Days', '', {}, []]) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action('settings.update', 'c-noord', {cooldownHours: 24, cooldownUnit})).status, 400);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before, 'Invalid units must not change the value, unit or newsfeed');
+  }
+  for (const cooldownHours of [-24, 8761, 2.5, '48', null]) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action('settings.update', 'c-noord', {cooldownHours, cooldownUnit: 'days'})).status, 400);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before, 'Changing display units must not weaken canonical hour validation');
+  }
+  const setup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  const legacy = JSON.parse(setup.prepare('SELECT json FROM app_state WHERE id=1').get().json);
+  legacy.settings.cooldownUnit = 'legacy-weeks';
+  setup.prepare('UPDATE app_state SET json=? WHERE id=1').run(JSON.stringify(legacy));
+  setup.close();
+  const updated = accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 96}));
+  assert.equal(updated.state.settings.cooldownHours, 96);
+  assert.equal(updated.state.settings.cooldownUnit, 'hours', 'An invalid legacy unit must fall back to hours when the new payload omits it');
+});
+
+test('company administrators and sellers cannot change the global call-wait unit', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 48, cooldownUnit: 'days'}));
+  for (const [role, email, companyId] of [['verkoper', 'unit-seller@example.test', 'c-noord'], ['bedrijfsbeheerder', 'unit-admin@example.test', 'c-delta']]) {
+    const invitation = accepted(await owner.action('invitation.create', 'c-noord', {name: role, email, companyId, role})).result;
+    const browser = env.client();
+    accepted(await browser.activate(invitation.token, role));
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await browser.action('settings.update', companyId, {cooldownHours: 24, cooldownUnit: 'hours'})).status, 403);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+  const settings = accepted(await owner.state()).state.settings;
+  assert.equal(settings.cooldownHours, 48);
+  assert.equal(settings.cooldownUnit, 'days');
+});

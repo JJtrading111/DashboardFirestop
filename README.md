@@ -10,6 +10,10 @@ Op het inlogscherm kun je **Aangemeld blijven** aanvinken. De aanmelding blijft 
 
 Met **Tonen / Verbergen** kun je het wachtwoord zichtbaar maken en weer afschermen. Deze knoppen staan ook bij beide wachtwoordvelden tijdens accountactivatie. Het wachtwoord wordt hiervoor niet apart opgeslagen.
 
+## Belwachttijd
+
+De hoofdbeheerder kan bij **Instellingen → Belwachttijd tussen bedrijven** kiezen tussen uren en dagen. Wisselen rekent de bestaande duur om (48 uur = 2 dagen); sla de instelling op om duur en gekozen eenheid voor alle bedrijven te bewaren. De maximale wachttijd is 365 dagen. De uitzondering voor de eigen terugbelafspraak blijft gelden.
+
 ## Uitnodigen
 
 1. Meld je aan via `/login` met de beheerlogin uit Railway Variables. Zonder ingesteld beheerwachtwoord kun je het eerste beheeraccount via een eenmalige activatielink activeren.
