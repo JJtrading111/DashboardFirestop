@@ -1,0 +1,329 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp, rm} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {once} from 'node:events';
+import {randomBytes} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
+import {createApp} from '../server.mjs';
+
+const PASSWORD = 'Test-only-password-2026!';
+const OTHER_PASSWORD = 'Another-test-password-2026!';
+const ADMIN_EMAIL = 'owner@example.test';
+
+async function fixture(extra = {}) {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'bouwberichten-api-test-'));
+  const bootstrapToken = randomBytes(32).toString('base64url');
+  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', publicOrigin: '', secureCookies: false, ...extra};
+  let app, base;
+  async function start() {
+    app = await createApp(options);
+    app.server.listen(0, '127.0.0.1');
+    await once(app.server, 'listening');
+    base = `http://127.0.0.1:${app.server.address().port}`;
+  }
+  await start();
+  function client() {
+    const session = {cookie: '', csrfToken: '', user: null};
+    return Object.assign(session, {
+      async request(route, {method = 'GET', body, csrf = true, origin = true, headers = {}} = {}) {
+        const outgoing = {...headers};
+        if (session.cookie) outgoing.Cookie = session.cookie;
+        if (origin) outgoing.Origin = typeof origin === 'string' ? origin : base;
+        if (body !== undefined) outgoing['Content-Type'] = 'application/json';
+        if (csrf && session.csrfToken) outgoing['X-CSRF-Token'] = session.csrfToken;
+        const response = await fetch(base + route, {method, headers: outgoing, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual'});
+        const cookie = response.headers.get('set-cookie');
+        if (cookie) session.cookie = cookie.split(';')[0];
+        const text = await response.text();
+        let data; try {data = JSON.parse(text);} catch {data = null;}
+        if (response.ok && data?.csrfToken) session.csrfToken = data.csrfToken;
+        if (response.ok && data?.user) session.user = data.user;
+        return {status: response.status, ok: response.ok, data, text, headers: response.headers};
+      },
+      async action(type, companyId, payload = {}, requestOptions = {}) {
+        return session.request('/api/action', {method: 'POST', body: {type, companyId, payload}, ...requestOptions});
+      },
+      async activate(token, name = 'Testgebruiker', password = PASSWORD) {
+        return session.request('/api/auth/activate', {method: 'POST', body: {token, name, password}});
+      },
+      async login(email = ADMIN_EMAIL, password = PASSWORD) {
+        return session.request('/api/auth/login', {method: 'POST', body: {email, password}});
+      },
+      async state(companyId = 'c-noord') {
+        return session.request(`/api/state?companyId=${encodeURIComponent(companyId)}`);
+      }
+    });
+  }
+  return {
+    client, bootstrapToken, dataDir,
+    get base() {return base;},
+    async restart() {await app.close(); await start();},
+    async close() {
+      await app.close();
+      const resolved = path.resolve(dataDir), parent = path.resolve(os.tmpdir());
+      assert.equal(path.dirname(resolved), parent);
+      assert.ok(path.basename(resolved).startsWith('bouwberichten-api-test-'));
+      await rm(resolved, {recursive: true, force: true});
+    }
+  };
+}
+
+function accepted(response, context = '') {
+  assert.ok(response.ok, `${context}: ${response.status} ${response.data?.error || response.text.slice(0, 300)}`);
+  return response.data;
+}
+function denied(response, context = '') {
+  assert.ok(response.status >= 400 && response.status < 500, `${context} should fail: ${response.status}`);
+  assert.equal(typeof response.data?.error, 'string', `${context} needs a useful error`);
+}
+function assertNoSecrets(state) {
+  const serialized = JSON.stringify(state);
+  assert.doesNotMatch(serialized, /"(?:passwordHash|password_hash|tokenHash|token_hash|csrfToken|sessionHash|session_hash|salt)"\s*:/i);
+}
+
+test('account activation, invitations, company boundaries and persistent shared work', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner = env.client(), anonymous = env.client();
+  let seller, deltaAdmin, deltaSeller, sellerId, deltaAdminId, originalInvite;
+
+  await t.test('only public assets and health are accessible before sign-in', async () => {
+    assert.equal(accepted(await anonymous.request('/health')).ok, true);
+    const session = accepted(await anonymous.request('/api/session'));
+    assert.equal(session.authenticated, false);
+    assert.equal((await anonymous.state()).status, 401);
+    denied(await anonymous.action('settings.update', 'c-noord', {cooldownHours: 0}));
+    const index = await anonymous.request('/');
+    assert.equal(index.status, 200);
+    assert.match(index.text, /Bouwberichten Dashboard/);
+    for (const route of ['/server.mjs', '/.env', '/.git/config', '/data/app.sqlite', '/%2e%2e%2fserver.mjs']) {
+      const result = await anonymous.request(route);
+      assert.equal(result.status, 404, `${route} must not expose private files or a misleading success`);
+    }
+  });
+
+  await t.test('bootstrap invitation is one-use and a weak password does not consume it', async () => {
+    const preview = accepted(await anonymous.request('/api/invitations/preview', {method: 'POST', body: {token: env.bootstrapToken}}));
+    assert.equal(preview.invitation.email, ADMIN_EMAIL);
+    assert.equal(preview.invitation.role, 'hoofdbeheerder');
+    denied(await anonymous.activate('not-a-valid-token'));
+    denied(await anonymous.activate(env.bootstrapToken, 'Testbeheerder', 'short'));
+    const activated = accepted(await owner.activate(env.bootstrapToken, 'Testbeheerder'));
+    assert.equal(activated.authenticated, true);
+    assert.equal(activated.user.role, 'hoofdbeheerder');
+    assert.equal(activated.user.companyId, 'c-noord');
+    assert.match(owner.cookie, /=.+/);
+    assert.ok(owner.csrfToken.length >= 24);
+    denied(await anonymous.activate(env.bootstrapToken));
+    assertNoSecrets(activated.user);
+  });
+
+  await t.test('sessions use HttpOnly cookies and reject cross-site or missing-CSRF writes', async () => {
+    const signIn = await env.client().login();
+    accepted(signIn);
+    assert.match(signIn.headers.get('set-cookie'), /HttpOnly/i);
+    assert.match(signIn.headers.get('set-cookie'), /SameSite=Lax/i);
+    assert.match(signIn.headers.get('cache-control'), /no-store/i);
+    assert.equal((await owner.action('settings.update', 'c-noord', {cooldownHours: 24}, {csrf: false})).status, 403);
+    const unicodeCsrf = 'é'.repeat(owner.csrfToken.length);
+    const malformed = await owner.action('settings.update', 'c-noord', {cooldownHours: 24}, {csrf: false, headers: {'X-CSRF-Token': unicodeCsrf}});
+    assert.equal(malformed.status, 403, 'A byte-length mismatch in the CSRF header must be rejected, never throw a 500');
+    assert.equal((await owner.action('settings.update', 'c-noord', {cooldownHours: 24}, {origin: 'https://untrusted.example'})).status, 403);
+    denied(await env.client().login(ADMIN_EMAIL, 'incorrect-password'));
+    assert.equal(accepted(await owner.request('/api/session')).user.id, owner.user.id);
+  });
+
+  await t.test('links carry an unpredictable token, list responses never expose it, and activation fixes one company', async () => {
+    originalInvite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Noord Verkoper', email: 'seller@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+    assert.ok(originalInvite.token.length >= 40);
+    assert.ok(originalInvite.invitation.id);
+    const state = accepted(await owner.state()).state;
+    assertNoSecrets(state);
+    assert.ok(!JSON.stringify(state).includes(originalInvite.token));
+    const link = new URL('/#activate=' + originalInvite.token, env.base);
+    assert.equal(link.search, '');
+    assert.equal(link.hash.slice(10), originalInvite.token);
+    const preview = accepted(await anonymous.request('/api/invitations/preview', {method: 'POST', body: {token: originalInvite.token}}));
+    assert.equal(preview.invitation.companyId, 'c-noord');
+    seller = env.client();
+    const result = accepted(await seller.request('/api/auth/activate', {method: 'POST', body: {token: originalInvite.token, name: 'Noord Verkoper', password: PASSWORD, email: 'forged@example.test', companyId: 'c-delta', role: 'hoofdbeheerder'}}));
+    sellerId = result.user.id;
+    assert.equal(result.user.companyId, 'c-noord');
+    assert.equal(result.user.role, 'verkoper');
+    denied(await owner.action('invitation.create', 'c-delta', {name: 'Duplicate', email: 'SELLER@example.test', companyId: 'c-delta', role: 'verkoper'}));
+  });
+
+  await t.test('only one activation wins when the invitation is used concurrently', async () => {
+    const invite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Eenmaal', email: 'once@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+    const outcomes = await Promise.all([env.client().activate(invite.token, 'Eenmaal'), env.client().activate(invite.token, 'Nogmaals')]);
+    assert.equal(outcomes.filter(r => r.ok).length, 1);
+    assert.equal(outcomes.filter(r => r.status >= 400 && r.status < 500).length, 1);
+  });
+
+  await t.test('rotating and revoking links invalidate the previous token immediately', async () => {
+    const invite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Nieuwe link', email: 'rotate@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+    const rotated = accepted(await owner.action('invitation.rotate', 'c-noord', {invitationId: invite.invitation.id})).result;
+    assert.notEqual(rotated.token, invite.token);
+    denied(await anonymous.activate(invite.token));
+    accepted(await anonymous.request('/api/invitations/preview', {method: 'POST', body: {token: rotated.token}}));
+    accepted(await owner.action('invitation.revoke', 'c-noord', {invitationId: invite.invitation.id}));
+    denied(await anonymous.activate(rotated.token));
+  });
+
+  await t.test('company administrators manage only their company and cannot create a head administrator', async () => {
+    const invite = accepted(await owner.action('invitation.create', 'c-delta', {name: 'Delta Beheerder', email: 'delta-admin@example.test', companyId: 'c-delta', role: 'bedrijfsbeheerder'})).result;
+    deltaAdmin = env.client();
+    const activated = accepted(await deltaAdmin.activate(invite.token, 'Delta Beheerder'));
+    deltaAdminId = activated.user.id;
+    const ownInvite = accepted(await deltaAdmin.action('invitation.create', 'c-delta', {name: 'Delta Verkoper', email: 'delta-seller@example.test', companyId: 'c-delta', role: 'verkoper'})).result;
+    deltaSeller = env.client();
+    accepted(await deltaSeller.activate(ownInvite.token, 'Delta Verkoper'));
+    assert.equal((await deltaAdmin.action('invitation.create', 'c-delta', {name: 'Hoofd', email: 'bad-head@example.test', companyId: 'c-delta', role: 'hoofdbeheerder'})).status, 403);
+    assert.equal((await deltaAdmin.action('invitation.create', 'c-noord', {name: 'Ander bedrijf', email: 'bad-company@example.test', companyId: 'c-noord', role: 'verkoper'})).status, 403);
+    assert.equal((await deltaAdmin.action('settings.update', 'c-delta', {cooldownHours: 0})).status, 403);
+  });
+
+  await t.test('sellers cannot gain management roles, create invitations or select another company', async () => {
+    assert.equal((await seller.action('invitation.create', 'c-noord', {name: 'Collega', email: 'seller-invite@example.test', companyId: 'c-noord', role: 'verkoper'})).status, 403);
+    assert.equal((await seller.action('user.update', 'c-noord', {userId: sellerId, companyId: 'c-noord', role: 'hoofdbeheerder'})).status, 403);
+    assert.equal((await seller.action('settings.update', 'c-noord', {cooldownHours: 0})).status, 403);
+    assert.equal((await seller.state('c-delta')).status, 403);
+    assert.equal((await seller.action('note.add', 'c-delta', {leadId: 'l-01', text: 'Foreign write'})).status, 403);
+    denied(await seller.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'role', value: 'hoofdbeheerder'}));
+  });
+
+  await t.test('notes and ownership stay inside one company and actor identity comes from the session', async () => {
+    const noteText = 'Confidential Noord note ' + randomBytes(8).toString('hex');
+    accepted(await seller.action('note.add', 'c-noord', {leadId: 'l-01', text: noteText, authorName: 'Forged administrator', authorId: owner.user.id}));
+    const own = accepted(await seller.state()).state;
+    const note = own.workspaces['c-noord']['l-01'].notes.find(n => n.text === noteText);
+    assert.equal(note.authorId, sellerId);
+    assert.equal(note.authorName, 'Noord Verkoper');
+    const foreign = accepted(await deltaAdmin.state('c-delta')).state;
+    assert.equal(JSON.stringify(foreign).includes(noteText), false);
+    assert.deepEqual(Object.keys(foreign.workspaces), ['c-delta']);
+    assert.ok(foreign.users.every(u => u.companyId === 'c-delta'));
+    assert.ok(foreign.invitations.every(i => i.companyId === 'c-delta'));
+    assertNoSecrets(own);
+    assertNoSecrets(foreign);
+  });
+
+  await t.test('toezegging and calculation are separate flags and field types are validated', async () => {
+    accepted(await seller.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'commitment', value: true}));
+    let work = accepted(await seller.state()).state.workspaces['c-noord']['l-01'];
+    assert.equal(work.commitment, true);
+    assert.equal(work.calculation, false);
+    accepted(await seller.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'calculation', value: true}));
+    accepted(await seller.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'commitment', value: false}));
+    work = accepted(await seller.state()).state.workspaces['c-noord']['l-01'];
+    assert.equal(work.commitment, false);
+    assert.equal(work.calculation, true);
+    denied(await seller.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'commitment', value: 'false'}));
+    denied(await seller.action('workspace.update', 'c-noord', {leadId: 'l-01', field: 'status', value: 'unknown-column'}));
+  });
+
+  await t.test('the global cooldown is per lead and an assigned due callback is the exception', async () => {
+    accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 48}));
+    accepted(await deltaAdmin.action('call.record', 'c-delta', {leadId: 'l-02'}));
+    denied(await seller.action('call.record', 'c-noord', {leadId: 'l-02'}));
+    accepted(await seller.action('call.record', 'c-noord', {leadId: 'l-03'}));
+    accepted(await owner.action('callback.add', 'c-noord', {leadId: 'l-02', dueAt: new Date(Date.now() - 60000).toISOString(), assigneeId: owner.user.id}));
+    denied(await seller.action('call.record', 'c-noord', {leadId: 'l-02'}));
+    accepted(await owner.action('callback.add', 'c-noord', {leadId: 'l-02', dueAt: new Date(Date.now() - 30000).toISOString(), assigneeId: sellerId}));
+    accepted(await seller.action('call.record', 'c-noord', {leadId: 'l-02'}));
+    const hidden = accepted(await deltaAdmin.state('c-delta')).state.callLog.filter(c => c.companyId !== 'c-delta');
+    assert.ok(hidden.length > 0);
+    assert.ok(hidden.every(c => !c.userName && !c.userId));
+  });
+
+  await t.test('a head administrator can log a call for another company without assigning themselves to that company', async () => {
+    const result = accepted(await owner.action('call.record', 'c-horizon', {leadId: 'l-05'}));
+    const work = result.state.workspaces['c-horizon']['l-05'];
+    assert.equal(work.ownerId, null);
+    assert.equal(work.calls.at(-1).userId, owner.user.id);
+    assert.equal(result.state.users.find(u => u.id === owner.user.id).companyId, 'c-noord');
+  });
+
+  await t.test('company additions and historical data survive moving a user, while their old session is revoked', async () => {
+    const before = accepted(await owner.state()).state;
+    const historyBefore = before.workspaces['c-noord']['l-01'].notes;
+    const oldCompanyCount = before.companies.length;
+    accepted(await owner.action('company.create', 'c-noord', {name: 'Nieuw bedrijf voor test'}));
+    assert.equal(accepted(await owner.state()).state.companies.length, oldCompanyCount + 1);
+    accepted(await owner.action('user.update', 'c-noord', {userId: sellerId, companyId: 'c-delta', role: 'verkoper'}));
+    assert.equal((await seller.state()).status, 401);
+    accepted(await seller.login('seller@example.test'));
+    assert.equal(seller.user.companyId, 'c-delta');
+    assert.equal((await seller.state('c-noord')).status, 403);
+    const after = accepted(await owner.state()).state;
+    assert.deepEqual(after.workspaces['c-noord']['l-01'].notes, historyBefore);
+    assert.equal(JSON.stringify(accepted(await seller.state('c-delta')).state).includes(historyBefore[0].text), false);
+  });
+
+  await t.test('accounts and shared work remain after restarting the application', async () => {
+    const before = accepted(await owner.state()).state;
+    await env.restart();
+    const newOwner = env.client();
+    accepted(await newOwner.login());
+    const after = accepted(await newOwner.state()).state;
+    assert.deepEqual(after.companies, before.companies);
+    assert.deepEqual(after.workspaces['c-noord']['l-01'].notes, before.workspaces['c-noord']['l-01'].notes);
+    assert.equal(after.users.find(u => u.id === sellerId).companyId, 'c-delta');
+    denied(await env.client().activate(env.bootstrapToken));
+    accepted(await newOwner.request('/api/auth/logout', {method: 'POST', body: {}}));
+    assert.equal((await newOwner.state()).status, 401);
+  });
+});
+
+test('expired invitations are rejected and a fresh link restores only the intended invitation', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner = env.client(), anonymous = env.client();
+  accepted(await owner.activate(env.bootstrapToken, 'Owner'));
+  const invite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Verlopen uitnodiging', email: 'expired@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+  // Move only this invitation's expiry into the past to exercise the public API
+  // without waiting seven days or changing process-global time.
+  const clockSetup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  clockSetup.prepare('UPDATE invitations SET expires_at=? WHERE id=?').run(Date.now() - 1000, invite.invitation.id);
+  clockSetup.close();
+  assert.equal((await anonymous.request('/api/invitations/preview', {method: 'POST', body: {token: invite.token}})).status, 410);
+  assert.equal((await anonymous.activate(invite.token)).status, 410);
+  const rotated = accepted(await owner.action('invitation.rotate', 'c-noord', {invitationId: invite.invitation.id})).result;
+  assert.equal(rotated.invitation.email, 'expired@example.test');
+  assert.equal(rotated.invitation.companyId, 'c-noord');
+  assert.equal(rotated.invitation.role, 'verkoper');
+  accepted(await anonymous.activate(rotated.token, 'Verlopen uitnodiging'));
+});
+
+test('production cookies are Secure and invalid origins cannot activate a link', async t => {
+  const expectedOrigin = 'https://dashboard.example.test';
+  const env = await fixture({secureCookies: true, publicOrigin: expectedOrigin});
+  t.after(() => env.close());
+  const browser = env.client();
+  const bad = await browser.request('/api/auth/activate', {method: 'POST', body: {token: env.bootstrapToken, name: 'Owner', password: PASSWORD}, origin: 'https://evil.example'});
+  assert.equal(bad.status, 403);
+  const result = await browser.request('/api/auth/activate', {method: 'POST', body: {token: env.bootstrapToken, name: 'Owner', password: OTHER_PASSWORD}, origin: expectedOrigin});
+  accepted(result);
+  assert.match(result.headers.get('set-cookie'), /(?:^|;)\s*Secure(?:;|$)/i);
+  assert.match(result.headers.get('set-cookie'), /HttpOnly/i);
+});
+
+test('changing your own role keeps a head administrator and immediately invalidates the old session', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const first = env.client(), second = env.client();
+  accepted(await first.activate(env.bootstrapToken, 'Eerste hoofdbeheerder'));
+  const firstId = first.user.id;
+  denied(await first.action('user.update', 'c-noord', {userId: firstId, companyId: 'c-noord', role: 'verkoper'}));
+  const invite = accepted(await first.action('invitation.create', 'c-noord', {name: 'Tweede hoofdbeheerder', email: 'second-head@example.test', companyId: 'c-noord', role: 'hoofdbeheerder'})).result;
+  accepted(await second.activate(invite.token, 'Tweede hoofdbeheerder'));
+  const changed = accepted(await first.action('user.update', 'c-noord', {userId: firstId, companyId: 'c-noord', role: 'verkoper'}));
+  assert.equal(changed.state.users.find(u => u.id === firstId).role, 'verkoper');
+  assert.equal((await first.state()).status, 401);
+  accepted(await first.login());
+  assert.equal(first.user.role, 'verkoper');
+  assert.equal((await first.action('settings.update', 'c-noord', {cooldownHours: 0})).status, 403);
+  accepted(await second.action('settings.update', 'c-noord', {cooldownHours: 24}));
+});
