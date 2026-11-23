@@ -41,13 +41,20 @@ export function createApp(options={}){
  CREATE TABLE IF NOT EXISTS credentials(user_id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,email TEXT NOT NULL,name TEXT NOT NULL,company_id TEXT NOT NULL,role TEXT NOT NULL,user_id TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL,creator_id TEXT);
  CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,csrf TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS demo_lead_archives(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,actor_id TEXT NOT NULL,json TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
  CREATE INDEX IF NOT EXISTS invitations_email ON invitations(email);`);
  const readState=()=>JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json);
  const writeState=s=>{const copy={...s,invitations:[]};db.prepare('INSERT INTO app_state(id,json) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(JSON.stringify(copy));};
  const transaction=fn=>{db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}};
  if(!db.prepare('SELECT id FROM app_state WHERE id=1').get()){
-  const seed=createDemoState();seed.users=[{id:'u-admin',name:text(adminName,'Naam',100),email:adminEmail,companyId:'c-noord',role:'hoofdbeheerder',status:'uitgenodigd'}];
+  const seed=options.seedDemoData===true?createDemoState():{
+   version:1,
+   companies:[{id:'c-noord',name:'Mijn bedrijf',initials:'MB',color:'#2563eb',columns:[{id:'nieuw',name:'Nieuw'},{id:'contact',name:'In contact'},{id:'opvolgen',name:'Opvolgen'},{id:'offerte',name:'Offerte'},{id:'afgerond',name:'Afgerond'}]}],
+   users:[],leads:[],workspaces:{},callLog:[],feed:[],invitations:[],
+   sources:[{id:'bouw',name:'Bouwberichten.nl',url:'https://www.bouwberichten.nl',username:'',enabled:false},{id:'hotels',name:'Hotels',url:'',username:'',enabled:false},{id:'vve',name:'VvE',url:'',username:'',enabled:false},{id:'outlook',name:'Microsoft Outlook',url:'',username:'',enabled:false}],
+   settings:{cooldownHours:48}
+  };seed.users=[{id:'u-admin',name:text(adminName,'Naam',100),email:adminEmail,companyId:'c-noord',role:'hoofdbeheerder',status:'uitgenodigd'}];
   const ownerCompany=seed.companies.find(c=>c.id==='c-noord');ownerCompany.name='Mijn bedrijf';ownerCompany.initials='MB';
   seed.workspaces={};for(const c of seed.companies)seed.workspaces[c.id]={};seed.callLog=[];seed.feed=seed.feed.filter(f=>!f.companyId);seed.invitations=[];seed.leads.forEach(l=>l.demo=true);seed.shared=true;
   writeState(seed);
@@ -119,6 +126,26 @@ export function createApp(options={}){
  function action(actor,type,cid,p){return transaction(()=>{
   const s=readState(),fresh=s.users.find(u=>u.id===actor.id&&u.status==='actief');if(!fresh)fail(401,'Meld je opnieuw aan.');actor=fresh;const company=requireCompany(s,cid);if(actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je kunt alleen je eigen bedrijf wijzigen.');let result;
   switch(type){
+   case'demo.remove':{
+    requireChief(actor);
+    const demoLeads=s.leads.filter(lead=>lead.demo===true),removedIds=new Set(demoLeads.map(lead=>lead.id));
+    if(removedIds.size){
+     const archivedWorkspaces={};
+     for(const [companyId,entries]of Object.entries(s.workspaces)){
+      const archived=Object.fromEntries(Object.entries(entries).filter(([leadId])=>removedIds.has(leadId)));
+      if(Object.keys(archived).length)archivedWorkspaces[companyId]=archived;
+     }
+     const archive={leads:demoLeads,workspaces:archivedWorkspaces,callLog:s.callLog.filter(call=>removedIds.has(call.leadId)),feed:s.feed.filter(item=>removedIds.has(item.leadId))};
+     db.prepare('INSERT INTO demo_lead_archives(id,created_at,actor_id,json) VALUES(?,?,?,?)').run(id('demo-archive'),iso(Date.now()),actor.id,JSON.stringify(archive));
+     s.leads=s.leads.filter(lead=>lead.demo!==true);
+     for(const entries of Object.values(s.workspaces))for(const leadId of Object.keys(entries))if(removedIds.has(leadId))delete entries[leadId];
+     s.callLog=s.callLog.filter(call=>!removedIds.has(call.leadId));
+     s.feed=s.feed.filter(item=>!removedIds.has(item.leadId));
+     addFeed(s,actor,cid,`${removedIds.size} demoleads verwijderd`);
+    }
+    result={removedCount:removedIds.size,remainingCount:s.leads.length};
+    break;
+   }
    case'workspace.update':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');w[field]=field==='ownerId'?(p.value||null):p.value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);break;}
    case'note.add':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id);w.notes.push({id:id('note'),text:text(p.text,'Notitie',4000),authorId:actor.id,authorName:actor.name,createdAt:iso(Date.now())});w.ownerId??=actor.companyId===cid?actor.id:null;addFeed(s,actor,cid,`Gespreksnotitie toegevoegd: ${lead.title}`,lead.id);break;}
    case'call.record':{requireLead(s,p.leadId);const workspace=getWorkspace(s,cid,p.leadId),previousOwner=workspace.ownerId;try{recordCall(s,p.leadId,cid,actor.id);}catch(error){fail(409,error.message);}if(!previousOwner&&actor.companyId!==cid)workspace.ownerId=null;break;}

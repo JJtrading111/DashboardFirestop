@@ -53,3 +53,8 @@
 .account-summary{display:flex;align-items:center;gap:14px;margin-bottom:25px}.account-summary .avatar{height:47px;width:47px;font-size:16px}.account-summary strong{font-size:18px}.account-summary p{margin:4px 0 0;color:#586f89;font-size:15px}.app-loading{min-height:100vh;display:grid;place-items:center;padding:30px;color:#34557b;font-size:18px}
 #invite-link{width:100%;font-size:14px;overflow-wrap:anywhere;background:#f4f7fb}.toast .text-link{overflow-wrap:anywhere}.auth-card form :disabled{cursor:wait}
 @media(max-width:700px){.auth-shell{padding:28px 16px;gap:24px}.auth-intro>.brand{font-size:19px}.auth-card{padding:25px;border-radius:14px}.auth-card h1{font-size:25px}.auth-card>p{font-size:16px}.account-summary{align-items:flex-start}.account-summary p{overflow-wrap:anywhere}}
+.kanban-card[role=button]{cursor:pointer}
+.kanban-card[role=button]:active{cursor:grabbing}
+.kanban-date{display:flex;align-items:center;gap:7px;padding:8px 9px;margin:12px 0;background:#f0f4fa;border-radius:6px;font-size:14px;line-height:1.5;color:#34557b}
+.kanban-date svg{width:16px;height:16px}
+.kanban-date.overdue{background:#fff3dc;color:#8c671f}

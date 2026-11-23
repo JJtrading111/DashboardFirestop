@@ -31,6 +31,27 @@ export function getWorkspace(state, companyId, leadId) {
   return state.workspaces[companyId][leadId];
 }
 
+export function nextFollowUpAt(state, companyId, leadId) {
+  const callbacks = getWorkspace(state, companyId, leadId).callbacks;
+  let earliest = Infinity;
+  for (const callback of callbacks) {
+    const due = Date.parse(callback.dueAt);
+    if (!callback.done && Number.isFinite(due) && due < earliest) earliest = due;
+  }
+  return earliest === Infinity ? null : new Date(earliest).toISOString();
+}
+
+export function sortFollowUpLeads(state, companyId, leads) {
+  const dates = new Map(leads.map(lead => [lead.id, nextFollowUpAt(state, companyId, lead.id)]));
+  return [...leads].sort((a, b) => {
+    const first = dates.get(a.id), second = dates.get(b.id);
+    if (first === second) return 0;
+    if (!first) return 1;
+    if (!second) return -1;
+    return Date.parse(first) - Date.parse(second);
+  });
+}
+
 export function callEligibility(state, leadId, companyId, userId, now = Date.now()) {
   const workspace = getWorkspace(state, companyId, leadId);
   const user = mustUser(state, userId);

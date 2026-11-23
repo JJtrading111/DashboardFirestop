@@ -2,6 +2,8 @@
 
 Nederlandstalig leadbeheer met een centrale leadvoorraad en eigen opvolging per bedrijf. Leads openen in een gecentreerde pop-up. De applicatie bevat Kanban, notities, bellijsten, terugbelafspraken, conversierapportages, bedrijfsbeheer en echte gebruikersaccounts.
 
+Open een lead door op de hele Kanban-kaart te klikken, of gebruik Enter of de spatiebalk. De kolom Opvolgen sorteert op het vroegste open terugbelmoment van het actieve bedrijf. Afgehandelde afspraken tellen niet mee; leads zonder afspraak staan onderaan. Slepen blijft beschikbaar om een status te wijzigen.
+
 ## Uitnodigen
 
 1. Meld je aan via `/login` met de beheerlogin uit Railway Variables. Zonder ingesteld beheerwachtwoord kun je het eerste beheeraccount via een eenmalige activatielink activeren.
@@ -43,6 +45,6 @@ Node.js 24 is vereist. Er zijn geen externe runtimepakketten nodig. Stel de vari
 
 ## Huidige grenzen
 
-De meegeleverde 18 leads zijn fictieve voorbeelden. Handmatig toegevoegde leads en opvolging worden gedeeld opgeslagen. Bouwberichten.nl, hotels, VvE en Outlook zijn nog niet aangesloten; de app bewaart geen bronwachtwoorden. Terugbelmeldingen verschijnen in een geopend tabblad en worden iedere 30 seconden ververst. Er is nog geen automatische e-mailverzending of e-mailgestuurde wachtwoordherstelprocedure.
+Nieuwe installaties starten zonder demoleads. Handmatig toegevoegde leads en opvolging worden gedeeld opgeslagen. Bestaande demoleads kunnen uitsluitend door een hoofdbeheerder worden opgeruimd via de onderhoudsactie `demo.remove`; alleen records met `demo === true` worden verwijderd, met een privéarchief van die demogegevens. Accounts, uitnodigingen, instellingen en handmatige leads blijven behouden. Bouwberichten.nl, hotels, VvE en Outlook zijn nog niet aangesloten; de app bewaart geen bronwachtwoorden. Terugbelmeldingen verschijnen in een geopend tabblad en worden iedere 30 seconden ververst. Er is nog geen automatische e-mailverzending of e-mailgestuurde wachtwoordherstelprocedure.
 
 Accounts gebruiken gehashte wachtwoorden en willekeurige, gehashte sessie- en uitnodigingstokens. De server controleert rollen en bedrijfsrechten bij iedere wijziging. Cookies zijn in productie HttpOnly, Secure en SameSite=Lax; schrijfacties vereisen een sessiegebonden CSRF-token.

@@ -15,7 +15,7 @@ const ADMIN_EMAIL = 'owner@example.test';
 async function fixture(extra = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'bouwberichten-api-test-'));
   const bootstrapToken = randomBytes(32).toString('base64url');
-  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', adminPassword: '', publicOrigin: '', secureCookies: false, ...extra};
+  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', adminPassword: '', seedDemoData: true, publicOrigin: '', secureCookies: false, ...extra};
   let app, base;
   async function start() {
     app = await createApp(options);
@@ -482,4 +482,104 @@ test('a managed administrator cannot be downgraded even when another head admini
   denied(await secondHead.action('user.update', 'c-noord', {userId: 'u-admin', companyId: 'c-noord', role: 'bedrijfsbeheerder'}));
   assert.equal(accepted(await owner.request('/api/session')).user.role, 'hoofdbeheerder');
   assert.equal(accepted(await owner.state()).state.users.find(user => user.id === 'u-admin').role, 'hoofdbeheerder');
+});
+
+test('demo cleanup removes only demo leads and their follow-up, preserving real work and account access', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client(), seller = env.client();
+  accepted(await owner.login());
+  const initial = accepted(await owner.state()).state;
+  assert.equal(initial.leads.length, 18);
+  assert.ok(initial.leads.every(lead => lead.demo === true));
+  const demoIds = new Set(initial.leads.map(lead => lead.id));
+  const invite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Echte verkoper', email: 'cleanup-seller@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+  accepted(await seller.activate(invite.token, 'Echte verkoper'));
+  accepted(await owner.action('invitation.create', 'c-noord', {name: 'Uitnodiging bewaren', email: 'cleanup-pending@example.test', companyId: 'c-noord', role: 'verkoper'}));
+  accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 72}));
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Alleen gekoppeld aan een demolead'}));
+  accepted(await owner.action('call.record', 'c-noord', {leadId: 'l-01'}));
+  accepted(await owner.action('callback.add', 'c-noord', {leadId: 'l-01', dueAt: new Date(Date.now() + 86400000).toISOString(), assigneeId: owner.user.id}));
+  accepted(await owner.action('note.add', 'c-delta', {leadId: 'l-02', text: 'Demo-opvolging bij een ander bedrijf'}));
+  const created = accepted(await owner.action('lead.create', 'c-noord', {
+    title: 'Renovatie Hotel Duinzicht', organization: 'Echt door gebruiker toegevoegd', city: 'Utrecht', source: 'hotels', contact: 'Eigen contactpersoon', phone: '+31 20 000 9876', email: 'real-project@example.test', description: 'Handmatig project dat ook bij een bestaande demonaam behouden moet blijven.'
+  }));
+  const realId = created.result.lead?.id || created.result.leadId;
+  assert.ok(realId);
+  assert.equal(created.state.leads.find(lead => lead.id === realId).demo, false);
+  accepted(await seller.action('note.add', 'c-noord', {leadId: realId, text: 'Echte gespreksnotitie die bewaard moet blijven'}));
+  accepted(await seller.action('call.record', 'c-noord', {leadId: realId}));
+  accepted(await seller.action('callback.add', 'c-noord', {leadId: realId, dueAt: new Date(Date.now() + 7200000).toISOString(), assigneeId: seller.user.id}));
+  accepted(await seller.action('workspace.update', 'c-noord', {leadId: realId, field: 'commitment', value: true}));
+  const before = databaseSnapshot(env.dataDir);
+  assert.equal((await seller.action('demo.remove', 'c-noord')).status, 403);
+  assert.deepEqual(databaseSnapshot(env.dataDir), before, 'A rejected cleanup must not change live data');
+  const removed = accepted(await owner.action('demo.remove', 'c-noord'));
+  assert.equal(removed.result.removedCount, 18);
+  assert.equal(removed.result.remainingCount, 1);
+  assert.deepEqual(removed.state.leads, before.state.leads.filter(lead => lead.id === realId));
+  assert.deepEqual(removed.state.workspaces['c-noord'][realId], before.state.workspaces['c-noord'][realId]);
+  for (const workspace of Object.values(removed.state.workspaces)) {
+    assert.ok(Object.keys(workspace).every(leadId => !demoIds.has(leadId)));
+  }
+  assert.ok(removed.state.callLog.every(call => !demoIds.has(call.leadId)));
+  assert.ok(removed.state.feed.every(item => !demoIds.has(item.leadId)));
+  assert.deepEqual(removed.state.callLog.filter(call => call.leadId === realId), before.state.callLog.filter(call => call.leadId === realId));
+  assert.deepEqual(removed.state.users, before.state.users);
+  assert.deepEqual(removed.state.companies, before.state.companies);
+  assert.deepEqual(removed.state.settings, before.state.settings);
+  assertNoSecrets(removed.state);
+  assert.equal(JSON.stringify(removed.state).includes('Alleen gekoppeld aan een demolead'), false);
+  assert.ok(!Object.keys(removed.state).some(key => /archive/i.test(key)), 'Private archives must not be included in application state');
+  const after = databaseSnapshot(env.dataDir);
+  assert.deepEqual(after.credentials, before.credentials);
+  assert.deepEqual(after.sessions, before.sessions);
+  assert.deepEqual(after.invitations, before.invitations);
+  assert.equal(accepted(await seller.request('/api/session')).authenticated, true);
+  const sellerState = accepted(await seller.state()).state;
+  assert.equal(sellerState.leads.length, 1);
+  assert.ok(!Object.keys(sellerState).some(key => /archive/i.test(key)));
+  for (const route of ['/api/demo/archive', '/api/archives', '/data/dashboard.sqlite', '/demo-archive.json']) {
+    const blocked = await seller.request(route);
+    assert.ok(blocked.status >= 400 && blocked.status < 500, 'Archived demo records must not be publicly retrievable');
+  }
+  const archiveDb = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  const archives = archiveDb.prepare('SELECT json FROM demo_lead_archives').all();
+  archiveDb.close();
+  assert.equal(archives.length, 1);
+  const archived = JSON.parse(archives[0].json);
+  assert.equal(archived.leads.length, 18);
+  assert.ok(archived.leads.every(lead => lead.demo === true));
+  assert.ok(JSON.stringify(archived).includes('Alleen gekoppeld aan een demolead'));
+  assert.equal(JSON.stringify(archived).includes('Echte gespreksnotitie die bewaard moet blijven'), false);
+  assertNoSecrets(archived);
+  const repeated = accepted(await owner.action('demo.remove', 'c-noord'));
+  assert.equal(repeated.result.removedCount, 0);
+  assert.equal(repeated.result.remainingCount, 1);
+  const afterRepeatDb = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  assert.equal(afterRepeatDb.prepare('SELECT count(*) AS count FROM demo_lead_archives').get().count, 1);
+  afterRepeatDb.close();
+  await env.restart();
+  const reloaded = accepted(await owner.state()).state;
+  assert.equal(reloaded.leads.length, 1, 'A restart must not recreate demo leads, even with the test seed option still true');
+  assert.equal(reloaded.leads[0].id, realId);
+  assert.deepEqual(reloaded.workspaces['c-noord'][realId], before.state.workspaces['c-noord'][realId]);
+});
+
+test('a fresh normal application starts with no demo leads and keeps accounts available', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD, seedDemoData: false});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  const state = accepted(await owner.state()).state;
+  assert.deepEqual(state.leads, []);
+  assert.deepEqual(state.callLog, []);
+  assert.ok(state.feed.every(item => !item.leadId));
+  assert.equal(state.users.find(user => user.id === 'u-admin').status, 'actief');
+  assert.equal(state.companies.length, 1);
+  assert.equal(state.companies[0].id, 'c-noord');
+  const result = accepted(await owner.action('demo.remove', 'c-noord'));
+  assert.deepEqual(result.result, {removedCount: 0, remainingCount: 0});
+  await env.restart();
+  assert.equal(accepted(await owner.state()).state.leads.length, 0);
 });
