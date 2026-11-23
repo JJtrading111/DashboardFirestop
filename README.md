@@ -4,7 +4,7 @@ Nederlandstalig leadbeheer met een centrale leadvoorraad en eigen opvolging per 
 
 ## Uitnodigen
 
-1. Activeer het eerste beheeraccount met de afzonderlijk verstrekte eenmalige activatielink.
+1. Meld je aan via `/login` met de beheerlogin uit Railway Variables. Zonder ingesteld beheerwachtwoord kun je het eerste beheeraccount via een eenmalige activatielink activeren.
 2. Open **Bedrijven & gebruikers** en kies **Gebruiker uitnodigen**.
 3. Vul naam en e-mailadres in, kies precies één bedrijf en een rol, en genereer de link.
 4. Kopieer en deel de link zelf met de bedoelde persoon. De applicatie verstuurt geen e-mail.
@@ -26,9 +26,12 @@ Benodigde omgevingsvariabelen:
 | `APP_URL` | De exacte publieke HTTPS-origin van de app, zonder pad |
 | `ADMIN_EMAIL` | E-mailadres voor het eerste beheeraccount |
 | `ADMIN_NAME` | Voorgestelde naam voor het eerste beheeraccount |
+| `ADMIN_PASSWORD` | Beheerwachtwoord van 12–256 tekens; activeert de eigenaar rechtstreeks voor aanmelden via `/login` |
 | `BOOTSTRAP_TOKEN` | Een willekeurig geheim van minstens 32 URL-veilige tekens voor de eerste activatie |
 
-De eerste activatielink heeft de vorm `APP_URL/#activate=BOOTSTRAP_TOKEN`. Verstrek deze alleen aan de eigenaar; neem de werkelijke waarde nooit op in GitHub. De server maakt de eerste uitnodiging één keer aan en heractiveert haar niet bij een herstart. Uitnodigingsgeheimen staan in een URL-fragment en worden door de client na het openen uit de adresbalk verwijderd.
+Met `ADMIN_PASSWORD` ingesteld beheert Railway de bestaande eigenaarlogin. De server bewaart het wachtwoord gehasht in de database en behoudt diens bedrijf en geschiedenis. Een gewijzigd beheerwachtwoord of e-mailadres wordt bij de volgende deployment toegepast en trekt bestaande beheerderssessies in. Een ongewijzigde instelling behoudt bestaande sessies. Dit eigenaaraccount blijft hoofdbeheerder. Bewaar de werkelijke waarden uitsluitend in Railway Variables; zet ze nooit in GitHub.
+
+Als alternatief zonder `ADMIN_PASSWORD` heeft de eerste activatielink de vorm `APP_URL/#activate=BOOTSTRAP_TOKEN`. Verstrek deze alleen aan de eigenaar. De server maakt de eerste uitnodiging één keer aan en heractiveert haar niet bij een herstart. Een rechtstreeks ingestelde beheerlogin maakt een nog openstaande eigenaaruitnodiging ongeldig. Uitnodigingsgeheimen staan in een URL-fragment en worden door de client na het openen uit de adresbalk verwijderd.
 
 Gebruik één replica: SQLite en het volume horen bij dezelfde service. Gezondheidscontrole: `/health`.
 

@@ -1,6 +1,6 @@
 import http from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
-import {randomBytes,randomUUID,createHash,scrypt as scryptCallback,timingSafeEqual} from 'node:crypto';
+import {randomBytes,randomUUID,createHash,scrypt as scryptCallback,scryptSync,timingSafeEqual} from 'node:crypto';
 import {promisify} from 'node:util';
 import {mkdirSync,readFileSync,existsSync} from 'node:fs';
 import path from 'node:path';
@@ -29,7 +29,9 @@ export function createApp(options={}){
  const secureCookies=options.secureCookies??(process.env.NODE_ENV==='production');
  const adminEmail=emailValue(options.adminEmail??process.env.ADMIN_EMAIL??'jjthtrading@gmail.com');
  const adminName=options.adminName??process.env.ADMIN_NAME??'Beheerder';
+ const adminPassword=options.adminPassword??process.env.ADMIN_PASSWORD??'';
  const bootstrapToken=options.bootstrapToken??process.env.BOOTSTRAP_TOKEN??'';
+ if(adminPassword&&(typeof adminPassword!=='string'||adminPassword.length<12||adminPassword.length>256))throw Error('ADMIN_PASSWORD must contain between 12 and 256 characters.');
  if(process.env.NODE_ENV==='production'&&!publicOrigin)throw Error('APP_URL is required in production.');
  if(publicOrigin&&new URL(publicOrigin).origin!==publicOrigin.replace(/\/$/,''))throw Error('APP_URL must contain only the public origin.');
  if(dataDir!==':memory:')mkdirSync(dataDir,{recursive:true});
@@ -50,7 +52,30 @@ export function createApp(options={}){
   seed.workspaces={};for(const c of seed.companies)seed.workspaces[c.id]={};seed.callLog=[];seed.feed=seed.feed.filter(f=>!f.companyId);seed.invitations=[];seed.leads.forEach(l=>l.demo=true);seed.shared=true;
   writeState(seed);
  }
- if(process.env.NODE_ENV==='production'&&!bootstrapToken&&!db.prepare('SELECT user_id FROM credentials LIMIT 1').get()){db.close();throw Error('BOOTSTRAP_TOKEN is required until the administrator account has been activated.');}
+ // An explicitly configured Railway password manages only the existing owner.
+ // Reuse the stored salt when checking it, so an unchanged deployment keeps sessions.
+ if(adminPassword){
+  try{transaction(()=>{
+   const s=readState(),owner=s.users.find(u=>u.id==='u-admin');
+   if(!owner)throw Error('The configured administrator account is missing.');
+   const collision=s.users.some(u=>u.id!==owner.id&&u.email.toLowerCase()===adminEmail)||db.prepare('SELECT user_id FROM credentials WHERE email=? AND user_id<>?').get(adminEmail,owner.id)||db.prepare("SELECT id FROM invitations WHERE email=? AND status='pending' AND (user_id IS NULL OR user_id<>?)").get(adminEmail,owner.id);
+   if(collision)throw Error('ADMIN_EMAIL is already assigned to another account or invitation.');
+   const existing=db.prepare('SELECT * FROM credentials WHERE user_id=?').get(owner.id);
+   let unchanged=false;
+   if(existing){const [salt,hex]=existing.password_hash.split(':'),expected=Buffer.from(hex,'hex'),actual=scryptSync(adminPassword,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024});unchanged=expected.length===actual.length&&timingSafeEqual(expected,actual);}
+   const changed=!unchanged||existing?.email!==adminEmail||owner.email!==adminEmail||owner.status!=='actief'||owner.role!=='hoofdbeheerder';
+   if(changed){
+    let hash=existing?.password_hash;
+    if(!unchanged){const salt=randomBytes(16).toString('hex');hash=salt+':'+scryptSync(adminPassword,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024}).toString('hex');}
+    Object.assign(owner,{email:adminEmail,status:'actief',role:'hoofdbeheerder'});
+    db.prepare('INSERT INTO credentials(user_id,email,password_hash) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET email=excluded.email,password_hash=excluded.password_hash').run(owner.id,adminEmail,hash);
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(owner.id);
+    writeState(s);
+   }
+   db.prepare("UPDATE invitations SET status='revoked' WHERE user_id=? AND status='pending'").run(owner.id);
+  });}catch(error){db.close();throw error;}
+ }
+ if(process.env.NODE_ENV==='production'&&!bootstrapToken&&!db.prepare('SELECT user_id FROM credentials LIMIT 1').get()){db.close();throw Error('ADMIN_PASSWORD or BOOTSTRAP_TOKEN is required until the administrator account has been activated.');}
  // Bootstrap is minted once only, never regenerated after use or on a restart.
  if(bootstrapToken&&!db.prepare('SELECT id FROM invitations WHERE user_id=?').get('u-admin')&&!db.prepare('SELECT user_id FROM credentials WHERE user_id=?').get('u-admin')){
   tokenValue(bootstrapToken);const owner=readState().users.find(u=>u.id==='u-admin');
@@ -102,7 +127,7 @@ export function createApp(options={}){
    case'lead.create':{const source=p.source;if(!['bouw','hotels','vve'].includes(source))fail(400,'Kies een geldige broncategorie.');const now=iso(Date.now()),lead={id:id('lead'),title:text(p.title,'Projectnaam',150),organization:text(p.organization,'Organisatie',120),city:text(p.city,'Plaats',100),source,contact:text(p.contact,'Contactpersoon',100),phone:text(p.phone,'Telefoonnummer',30),email:emailValue(p.email),description:text(p.description,'Projectomschrijving',3000),phase:'Oriëntatie',budget:'Nog niet bekend',createdAt:now,updatedAt:now,tags:['Handmatig toegevoegd'],demo:false};if(!/^[+\d ()-]{6,30}$/.test(lead.phone))fail(400,'Vul een geldig telefoonnummer in.');s.leads.unshift(lead);const w=getWorkspace(s,cid,lead.id);w.ownerId=actor.companyId===cid?actor.id:null;if(p.status){if(!company.columns.some(c=>c.id===p.status))fail(400,'Kies een geldige Kanban-status.');w.status=p.status;}s.feed.unshift({id:id('feed'),companyId:null,leadId:lead.id,type:'new',text:`Nieuwe centrale lead: ${lead.title}`,authorName:'Handmatig toegevoegd',at:now});result={lead,leadId:lead.id};break;}
    case'columns.update':{requireManager(actor,cid);if(!Array.isArray(p.columns)||p.columns.length!==company.columns.length||p.columns.length>30)fail(400,'Behoud de bestaande kolommen.');const next=p.columns.map(c=>({id:c.id,name:text(c.name,'Kolomnaam',35)}));if(next.some(c=>!company.columns.some(old=>old.id===c.id))||new Set(next.map(c=>c.id)).size!==next.length)fail(400,'De kolomindeling is ongeldig.');if(p.newColumn){if(next.length>=30)fail(400,'Gebruik maximaal 30 kolommen.');next.push({id:id('col'),name:text(p.newColumn,'Nieuwe kolom',35)});}if(new Set(next.map(c=>c.name.toLowerCase())).size!==next.length)fail(400,'Gebruik verschillende kolomnamen.');company.columns=next;addFeed(s,actor,cid,'Kanban-kolommen bijgewerkt');break;}
    case'company.create':{requireChief(actor);const name=text(p.name,'Bedrijfsnaam',120);if(s.companies.some(c=>c.name.toLowerCase()===name.toLowerCase()))fail(409,'Dit bedrijf bestaat al.');const c={id:id('company'),name,initials:name.split(/\s+/).map(x=>x[0]).slice(0,2).join('').toUpperCase(),color:'#dce8ff',columns:[{id:'nieuw',name:'Nieuw'},{id:'contact',name:'In contact'},{id:'opvolgen',name:'Opvolgen'},{id:'offerte',name:'Offerte'},{id:'afgerond',name:'Afgerond'}]};s.companies.push(c);s.workspaces[c.id]={};result={company:c};break;}
-   case'user.update':{const target=s.users.find(u=>u.id===p.userId);if(!target)fail(404,'Deze gebruiker bestaat niet.');if(!roles.includes(p.role))fail(400,'Kies een geldige rol.');requireCompany(s,p.companyId);if(actor.role!=='hoofdbeheerder'){requireManager(actor,target.companyId);if(p.companyId!==actor.companyId||target.role==='hoofdbeheerder'||p.role==='hoofdbeheerder')fail(403,'Je kunt alleen rollen binnen je eigen bedrijf beheren.');}if(target.role==='hoofdbeheerder'&&p.role!=='hoofdbeheerder'&&s.users.filter(u=>u.role==='hoofdbeheerder'&&u.status==='actief').length===1)fail(400,'Er moet minimaal één actieve hoofdbeheerder blijven.');transferUser(s,target.id,p.companyId);target.role=p.role;db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);addFeed(s,actor,cid,`Gebruiker bijgewerkt: ${target.name}`);break;}
+   case'user.update':{const target=s.users.find(u=>u.id===p.userId);if(!target)fail(404,'Deze gebruiker bestaat niet.');if(adminPassword&&target.id==='u-admin'&&p.role!=='hoofdbeheerder')fail(400,'Dit beheeraccount moet hoofdbeheerder blijven.');if(!roles.includes(p.role))fail(400,'Kies een geldige rol.');requireCompany(s,p.companyId);if(actor.role!=='hoofdbeheerder'){requireManager(actor,target.companyId);if(p.companyId!==actor.companyId||target.role==='hoofdbeheerder'||p.role==='hoofdbeheerder')fail(403,'Je kunt alleen rollen binnen je eigen bedrijf beheren.');}if(target.role==='hoofdbeheerder'&&p.role!=='hoofdbeheerder'&&s.users.filter(u=>u.role==='hoofdbeheerder'&&u.status==='actief').length===1)fail(400,'Er moet minimaal één actieve hoofdbeheerder blijven.');transferUser(s,target.id,p.companyId);target.role=p.role;db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);addFeed(s,actor,cid,`Gebruiker bijgewerkt: ${target.name}`);break;}
    case'source.update':{requireChief(actor);const source=s.sources.find(x=>x.id===p.id);if(!source||source.id==='outlook')fail(400,'Deze bron kan niet worden aangepast.');let url='';if(p.url){try{const parsed=new URL(text(p.url,'Bron-URL',500));if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password||parsed.search||parsed.hash)throw Error();url=parsed.href;}catch{fail(400,'Gebruik een http(s)-URL zonder inloggegevens, tokens of queryparameters.');}}source.url=url;source.username=typeof p.username==='string'?text(p.username||' ','Gebruikersnaam',160,0):'';source.enabled=false;break;}
    case'settings.update':{requireChief(actor);if(!Number.isInteger(p.cooldownHours)||p.cooldownHours<0||p.cooldownHours>8760)fail(400,'Gebruik een geheel aantal uren tussen 0 en 8760.');s.settings.cooldownHours=p.cooldownHours;addFeed(s,actor,cid,`Globale belwachttijd ingesteld op ${p.cooldownHours} uur`);break;}
    case'invitation.create':{result=invite(s,actor,p);break;}
@@ -112,7 +137,7 @@ export function createApp(options={}){
   }
   writeState(s);const responseActor=s.users.find(u=>u.id===actor.id);const responseCompany=responseActor.role==='hoofdbeheerder'?cid:responseActor.companyId;return{...scoped(s,responseActor,responseCompany),...(result?{result}:{})};
  });}
- const assets=new Map([['/','index.html'],['/index.html','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs']]);
+ const assets=new Map([['/','index.html'],['/index.html','index.html'],['/login','index.html'],['/login/','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs']]);
  const contentTypes={'.html':'text/html; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
  function headers(res,isApi=false){res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");res.setHeader('Cache-Control',isApi?'no-store':'no-cache');if(secureCookies)res.setHeader('Strict-Transport-Security','max-age=31536000');}
  function json(res,status,data){headers(res,true);res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}

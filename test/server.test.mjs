@@ -15,7 +15,7 @@ const ADMIN_EMAIL = 'owner@example.test';
 async function fixture(extra = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'bouwberichten-api-test-'));
   const bootstrapToken = randomBytes(32).toString('base64url');
-  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', publicOrigin: '', secureCookies: false, ...extra};
+  const options = {dataDir, bootstrapToken, adminEmail: ADMIN_EMAIL, adminName: 'Testbeheerder', adminPassword: '', publicOrigin: '', secureCookies: false, ...extra};
   let app, base;
   async function start() {
     app = await createApp(options);
@@ -57,11 +57,11 @@ async function fixture(extra = {}) {
     });
   }
   return {
-    client, bootstrapToken, dataDir,
+    client, bootstrapToken: options.bootstrapToken, dataDir,
     get base() {return base;},
-    async restart() {await app.close(); await start();},
+    async restart(optionsPatch = {}) {if (app) await app.close(); app = null; Object.assign(options, optionsPatch); await start();},
     async close() {
-      await app.close();
+      if (app) {await app.close(); app = null;}
       const resolved = path.resolve(dataDir), parent = path.resolve(os.tmpdir());
       assert.equal(path.dirname(resolved), parent);
       assert.ok(path.basename(resolved).startsWith('bouwberichten-api-test-'));
@@ -81,6 +81,18 @@ function denied(response, context = '') {
 function assertNoSecrets(state) {
   const serialized = JSON.stringify(state);
   assert.doesNotMatch(serialized, /"(?:passwordHash|password_hash|tokenHash|token_hash|csrfToken|sessionHash|session_hash|salt)"\s*:/i);
+}
+
+function databaseSnapshot(dataDir) {
+  const db = new DatabaseSync(path.join(dataDir, 'dashboard.sqlite'));
+  try {
+    return {
+      state: JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json),
+      credentials: db.prepare('SELECT * FROM credentials ORDER BY user_id').all().map(row => ({...row})),
+      sessions: db.prepare('SELECT * FROM sessions ORDER BY token_hash').all().map(row => ({...row})),
+      invitations: db.prepare('SELECT * FROM invitations ORDER BY id').all().map(row => ({...row}))
+    };
+  } finally {db.close();}
 }
 
 test('account activation, invitations, company boundaries and persistent shared work', async t => {
@@ -326,4 +338,148 @@ test('changing your own role keeps a head administrator and immediately invalida
   assert.equal(first.user.role, 'verkoper');
   assert.equal((await first.action('settings.update', 'c-noord', {cooldownHours: 0})).status, 403);
   accepted(await second.action('settings.update', 'c-noord', {cooldownHours: 24}));
+});
+
+test('a configured administrator password enables direct login without a bootstrap link', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const browser = env.client();
+  assert.equal(accepted(await browser.request('/api/session')).authenticated, false);
+  for (const route of ['/login', '/login/']) {
+    const page = await browser.request(route);
+    assert.equal(page.status, 200);
+    assert.match(page.text, /src="\/app\.mjs"/);
+    assert.match(page.text, /href="\/styles\.css"/);
+  }
+  const session = accepted(await browser.login());
+  assert.equal(session.user.id, 'u-admin');
+  assert.equal(session.user.email, ADMIN_EMAIL);
+  assert.equal(session.user.role, 'hoofdbeheerder');
+  assert.equal(session.user.status, 'actief');
+  assertNoSecrets(accepted(await browser.state()).state);
+  assert.equal(databaseSnapshot(env.dataDir).invitations.some(row => row.id === 'bootstrap-owner'), false);
+});
+
+test('an unchanged configured password preserves its hash and existing sessions across a restart', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Notitie vóór een normale herstart'}));
+  const before = databaseSnapshot(env.dataDir);
+  await env.restart();
+  const resumed = accepted(await owner.request('/api/session'));
+  assert.equal(resumed.authenticated, true);
+  assert.equal(resumed.csrfToken, owner.csrfToken);
+  const after = databaseSnapshot(env.dataDir);
+  assert.deepEqual(after.credentials, before.credentials);
+  assert.deepEqual(after.sessions, before.sessions);
+  assert.deepEqual(after.state, before.state);
+  assert.equal(accepted(await owner.state()).state.workspaces['c-noord']['l-01'].notes[0].text, 'Notitie vóór een normale herstart');
+});
+
+test('changing the configured password revokes old sessions and keeps the owner identity and history', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const oldSession = env.client();
+  accepted(await oldSession.login());
+  accepted(await oldSession.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Historie blijft na wachtwoordwijziging'}));
+  const before = databaseSnapshot(env.dataDir);
+  await env.restart({adminPassword: OTHER_PASSWORD});
+  assert.equal((await oldSession.state()).status, 401);
+  assert.equal(accepted(await oldSession.request('/api/session')).authenticated, false);
+  denied(await env.client().login(ADMIN_EMAIL, PASSWORD));
+  const owner = env.client();
+  const session = accepted(await owner.login(ADMIN_EMAIL, OTHER_PASSWORD));
+  assert.equal(session.user.id, 'u-admin');
+  assert.equal(session.user.name, 'Testbeheerder');
+  const after = databaseSnapshot(env.dataDir);
+  assert.notEqual(after.credentials[0].password_hash, before.credentials[0].password_hash);
+  assert.equal(after.state.users.length, before.state.users.length);
+  assert.deepEqual(after.state.workspaces, before.state.workspaces);
+});
+
+test('changing the configured email updates the existing owner and preserves company, name, password hash and history', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD, adminName: 'Bestaande beheerdersnaam'});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Bewaarde historie bij e-mailwijziging'}));
+  accepted(await owner.action('user.update', 'c-noord', {userId: 'u-admin', companyId: 'c-delta', role: 'hoofdbeheerder'}));
+  accepted(await owner.login());
+  const before = databaseSnapshot(env.dataDir);
+  const nextEmail = 'renamed-owner@example.test';
+  await env.restart({adminEmail: nextEmail, adminName: 'Naam uit nieuwe configuratie'});
+  assert.equal((await owner.state('c-delta')).status, 401);
+  denied(await env.client().login(ADMIN_EMAIL, PASSWORD));
+  const renamed = env.client();
+  const session = accepted(await renamed.login(nextEmail, PASSWORD));
+  assert.equal(session.user.id, 'u-admin');
+  assert.equal(session.user.name, 'Bestaande beheerdersnaam');
+  assert.equal(session.user.companyId, 'c-delta');
+  const after = databaseSnapshot(env.dataDir);
+  assert.equal(after.state.users.length, before.state.users.length);
+  assert.equal(after.credentials[0].password_hash, before.credentials[0].password_hash);
+  assert.equal(after.credentials[0].email, nextEmail);
+  assert.deepEqual(after.state.workspaces, before.state.workspaces);
+});
+
+test('configuring the password revokes an unused bootstrap link without replacing existing owner data', async t => {
+  const env = await fixture({adminName: 'Naam uit bestaande opslag'});
+  t.after(() => env.close());
+  const before = databaseSnapshot(env.dataDir);
+  const pending = env.client();
+  accepted(await pending.request('/api/invitations/preview', {method: 'POST', body: {token: env.bootstrapToken}}));
+  await env.restart({adminPassword: PASSWORD, adminName: 'Nieuwe configuratienaam'});
+  assert.equal((await pending.request('/api/invitations/preview', {method: 'POST', body: {token: env.bootstrapToken}})).status, 410);
+  assert.equal((await pending.activate(env.bootstrapToken)).status, 410);
+  const owner = env.client();
+  const session = accepted(await owner.login());
+  assert.equal(session.user.id, 'u-admin');
+  assert.equal(session.user.name, 'Naam uit bestaande opslag');
+  const after = databaseSnapshot(env.dataDir);
+  assert.equal(after.invitations.find(row => row.id === 'bootstrap-owner').status, 'revoked');
+  assert.deepEqual(after.state.leads, before.state.leads);
+  assert.deepEqual(after.state.companies, before.state.companies);
+  assert.deepEqual(after.state.workspaces, before.state.workspaces);
+});
+
+test('weak configured passwords and email collisions fail without partially changing stored accounts', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  accepted(await owner.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Deze historie mag niet gedeeltelijk wijzigen'}));
+  const second = env.client();
+  const invite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Ander account', email: 'collision@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+  accepted(await second.activate(invite.token, 'Ander account'));
+  const pendingInvite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Open uitnodiging', email: 'pending-collision@example.test', companyId: 'c-noord', role: 'verkoper'})).result;
+  let before = databaseSnapshot(env.dataDir);
+  await assert.rejects(env.restart({adminPassword: 'short'}), /ADMIN_PASSWORD/);
+  assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  await env.restart({adminPassword: PASSWORD});
+  assert.equal(accepted(await owner.request('/api/session')).authenticated, true);
+  before = databaseSnapshot(env.dataDir);
+  await assert.rejects(env.restart({adminEmail: 'collision@example.test'}), /ADMIN_EMAIL/);
+  assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  await env.restart({adminEmail: ADMIN_EMAIL});
+  before = databaseSnapshot(env.dataDir);
+  await assert.rejects(env.restart({adminEmail: 'pending-collision@example.test'}), /ADMIN_EMAIL/);
+  assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  await env.restart({adminEmail: ADMIN_EMAIL});
+  assert.equal(accepted(await owner.request('/api/session')).authenticated, true);
+  accepted(await env.client().request('/api/invitations/preview', {method: 'POST', body: {token: pendingInvite.token}}));
+});
+
+test('a managed administrator cannot be downgraded even when another head administrator exists', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client(), secondHead = env.client();
+  accepted(await owner.login());
+  const invite = accepted(await owner.action('invitation.create', 'c-noord', {name: 'Tweede hoofdbeheerder', email: 'managed-second-head@example.test', companyId: 'c-noord', role: 'hoofdbeheerder'})).result;
+  accepted(await secondHead.activate(invite.token, 'Tweede hoofdbeheerder'));
+  denied(await owner.action('user.update', 'c-noord', {userId: 'u-admin', companyId: 'c-noord', role: 'verkoper'}));
+  denied(await secondHead.action('user.update', 'c-noord', {userId: 'u-admin', companyId: 'c-noord', role: 'bedrijfsbeheerder'}));
+  assert.equal(accepted(await owner.request('/api/session')).user.role, 'hoofdbeheerder');
+  assert.equal(accepted(await owner.state()).state.users.find(user => user.id === 'u-admin').role, 'hoofdbeheerder');
 });
