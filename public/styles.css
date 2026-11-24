@@ -194,7 +194,7 @@
 .scraper-error{padding:12px 14px;border:1px solid #edc9c4;background:#fff3f1;color:#963e34;border-radius:8px;font-size:14px;line-height:1.6;overflow-wrap:anywhere;margin:15px 0 0}
 @media(max-width:500px){#source-scraper-form{padding:13px}#source-scraper-form .password-field{gap:6px}#source-scraper-form .password-toggle{min-width:76px;padding:10px 9px}.scraper-run-actions .button{width:100%}.scraper-last-run dl{grid-template-columns:85px minmax(0,1fr);gap:8px}.scraper-status-heading{align-items:flex-start}}
 
-.detail-drawer.workbook-drawer{width:min(1280px,calc(100vw - 40px))}
+.detail-drawer.workbook-drawer{width:min(1280px,calc(100vw - 40px));left:50vw;top:50vh;top:50dvh}
 .workbook-drawer .workbook-header{background:#102f3a;color:#fff;padding:16px 22px;border-bottom:3px solid #79b9a2}
 .workbook-header .workbook-heading{display:block;min-width:0}
 .workbook-heading h2{margin:5px 0 2px;color:#fff;overflow-wrap:anywhere}
@@ -247,8 +247,12 @@
 .workbook-activity{margin-top:13px;padding-top:11px;border-top:1px solid #d4e1df}
 .workbook-activity .note{margin-top:6px}
 .workbook-activity p{margin:4px 0}
+.workbook-footer{display:flex;flex:0 0 auto;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px 16px;padding:13px 21px;border-top:1px solid #d4e1df;background:#fff;position:relative;z-index:1}
+.workbook-footer>.button{flex:0 0 auto;min-height:44px;max-width:100%;margin-left:auto;white-space:normal}
+.workbook-save-error{flex:1 1 260px;min-width:0;margin:0;color:#963e34;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
 @media(max-width:930px){.detail-drawer .detail-body.workbook-columns{grid-template-columns:1fr 1fr}.workbook-column{padding:15px}.workbook-column.workbook-followup{grid-column:1/-1;border-left:0;border-top:1px solid #d4e1df}}
 @media(max-width:560px){.detail-drawer.workbook-drawer{width:calc(100vw - 20px)}.detail-drawer .detail-body.workbook-columns{display:flex;flex-direction:column}.workbook-column+.workbook-column{border-left:0;border-top:1px solid #d4e1df}.workbook-photo img{height:150px}.workbook-drawer .workbook-header{padding:11px 14px}}
+@media(max-width:560px){.workbook-footer{padding:11px 14px;gap:9px}.workbook-footer>.button{width:100%}.workbook-save-error{flex-basis:100%}}
 
 .project-date-filters{display:flex;flex-wrap:wrap;gap:8px 24px;margin:9px 22px 12px}
 .project-date-filter{display:flex;align-items:center;gap:8px 15px;flex-wrap:wrap;min-inline-size:0;margin:0;padding:4px 0 0;border:0}

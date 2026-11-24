@@ -17,6 +17,8 @@ if(initialFragment.has('activate')){activationToken=initialFragment.get('activat
 let pref;try{pref=JSON.parse(localStorage.getItem(PREF));}catch{}pref||={};
 const ui={route:routes.some(r=>r[0]===location.hash.slice(1))?location.hash.slice(1):'dashboard',userId:null,companyId:pref.companyId||null,query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:'',deliveryFrom:'',deliveryTo:'',projectDateSort:null,drawer:null,modal:null,feedFilter:'all',reportCompany:'current',reportSeller:'all',reportSource:'all',reportFrom:'',reportTo:'',dismissed:pref.dismissed||[],mobile:false};
 let transient=[],lastFocus=null,drawerScroll=0;
+let leadDraft=null,leadReturn=null;
+const leadFields=['status','priority','ownerId','commitment','calculation'];
 const currentUser=()=>state.users.find(x=>x.id===ui.userId)||state.users[0];
 const isChief=()=>currentUser().role==='hoofdbeheerder';
 const canManage=()=>isChief()||currentUser().role==='bedrijfsbeheerder';
@@ -387,6 +389,62 @@ function renderOverlay(){
  if(ui.modal){root.innerHTML=modalHTML();if(ui.modal.type==='source-scraper'){const modal=root.querySelector('.modal[data-scraper-source-id]'),source=leadSources().find(s=>s.id===ui.modal.id);if(modal&&source)updateScraperModal(modal,source,ui.modal);}updateCompanyLogoPreview();requestAnimationFrame(()=>root.querySelector('input:not([type=hidden]),select,button')?.focus());}
  else if(ui.drawer){root.innerHTML=drawerHTML();const body=root.querySelector('.detail-body');if(body)body.scrollTop=drawerScroll;}else root.innerHTML='';
  document.body.classList.toggle('overlay-open',!!(ui.modal||ui.drawer));
+ if(ui.drawer&&!ui.modal)updateLeadSaveUI();
+}
+
+function leadValues(w){return Object.fromEntries(leadFields.map(field=>[field,['commitment','calculation'].includes(field)?!!w[field]:field==='ownerId'?w[field]||null:w[field]]));}
+function getLeadDraft(leadId=ui.drawer,w=work(leadId)){
+ if(!leadDraft||leadDraft.leadId!==leadId||leadDraft.companyId!==ui.companyId||leadDraft.userId!==ui.userId)leadDraft={leadId,companyId:ui.companyId,userId:ui.userId,base:leadValues(w),changes:{},note:'',noteId:null,saving:false,error:''};
+ return leadDraft;
+}
+function draftLeadField(draft,field,value){if(value===draft.base[field])delete draft.changes[field];else draft.changes[field]=value;}
+function draftLeadNote(draft,value){if(draft.note.trim()!==value.trim())draft.noteId=null;draft.note=value;}
+function captureLeadDraft(){
+ const root=$('.workbook-drawer');if(!state||!ui.drawer||root?.dataset.drawerId!==ui.drawer)return null;
+ const draft=getLeadDraft();if(draft.saving)return draft;
+ root.querySelectorAll('[data-work]').forEach(control=>{const field=control.dataset.work;if(leadFields.includes(field))draftLeadField(draft,field,control.type==='checkbox'?control.checked:field==='ownerId'?control.value||null:control.value);});
+ const note=root.querySelector('#note-form textarea[name="text"]');if(note)draftLeadNote(draft,note.value);
+ return draft;
+}
+function openLeadDrawer(id,target){
+ if(leadDraft?.saving)return;
+ if(!ui.drawer||!leadReturn||leadReturn.route!==ui.route||leadReturn.companyId!==ui.companyId){const main=$('#main');leadReturn={route:ui.route,companyId:ui.companyId,target,leadId:id,x:window.scrollX,y:window.scrollY,scrolls:['#main','.table-wrap','.kanban'].map(selector=>{const element=selector==='#main'?main:main?.querySelector(selector);return{selector,left:element?.scrollLeft||0,top:element?.scrollTop||0};})};}
+ ui.modal=null;if(ui.drawer!==id){drawerScroll=0;leadDraft=null;}ui.drawer=id;getLeadDraft(id);lastFocus=target;renderOverlay();$('#detail-title')?.focus();
+}
+function closeLeadDrawer({saved=false}={}){
+ if(leadDraft?.saving)return;
+ const back=leadReturn;ui.drawer=null;leadDraft=null;leadReturn=null;drawerScroll=0;
+ if(saved)render();else renderOverlay();
+ if(!back||back.route!==ui.route||back.companyId!==ui.companyId)return;
+ requestAnimationFrame(()=>{
+  const main=$('#main'),target=back.target?.isConnected?back.target:[...main?.querySelectorAll('[data-action="open-lead"]')??[]].find(element=>element.dataset.id===back.leadId);
+  (target||main)?.focus({preventScroll:true});
+  for(const position of back.scrolls){const element=position.selector==='#main'?main:main?.querySelector(position.selector);if(element){element.scrollLeft=position.left;element.scrollTop=position.top;}}
+  window.scrollTo(back.x,back.y);
+ });
+}
+function updateLeadSaveUI(){
+ const root=$('.workbook-drawer');if(!root||!leadDraft||root.dataset.drawerId!==leadDraft.leadId)return;
+ const focused=document.activeElement;
+ root.querySelectorAll('button,input,select,textarea').forEach(control=>{if(leadDraft.saving){if(!control.hasAttribute('data-lead-save-disabled'))control.dataset.leadSaveDisabled=String(control.disabled);control.disabled=true;}else if(control.hasAttribute('data-lead-save-disabled')){control.disabled=control.dataset.leadSaveDisabled==='true';control.removeAttribute('data-lead-save-disabled');}});
+ const button=root.querySelector('[data-action="save-close-lead"]'),error=root.querySelector('.workbook-save-error');
+ if(button){button.textContent=leadDraft.saving?'Opslaan…':'Opslaan en sluiten';button.setAttribute('aria-busy',String(leadDraft.saving));}
+ if(error){error.textContent=leadDraft.error;error.hidden=!leadDraft.error;}
+ if(leadDraft.saving&&root.contains(focused))root.querySelector('#detail-title')?.focus({preventScroll:true});
+}
+async function saveLeadDraft({close=false}={}){
+ const draft=captureLeadDraft();if(!draft||draft.saving)return;
+ const note=draft.note.trim();if(!close&&!note){draft.error='Schrijf eerst een notitie.';updateLeadSaveUI();return;}
+ if(note&&!draft.noteId)draft.noteId='note-'+crypto.randomUUID();
+ const payload={leadId:draft.leadId,changes:{...draft.changes},...(note?{note:{id:draft.noteId,text:note}}:{})};
+ draft.saving=true;draft.error='';updateLeadSaveUI();
+ try{
+  await mutate('workspace.save',payload,draft.companyId);
+  draft.saving=false;draft.changes={};draft.note='';draft.noteId=null;draft.error='';
+  if(ui.drawer!==draft.leadId||ui.companyId!==draft.companyId)return;
+  if(close)closeLeadDrawer({saved:true});else{draft.base=leadValues(work(draft.leadId));render();$('#note-form textarea[name="text"]')?.focus();}
+  toast(close?'Opgeslagen.':'Notitie opgeslagen en gedeeld met je bedrijf.');
+ }catch(error){draft.saving=false;draft.error=error.message||'Opslaan is niet gelukt. Probeer het opnieuw.';if(state&&ui.drawer===draft.leadId)updateLeadSaveUI();}
 }
 
 function leadPhone(l){const phone=String(l.phone||'').replace(/[^+\d]/g,'');return /\d/.test(phone)?phone:'';}
@@ -434,6 +492,7 @@ function workbookContactHTML(l,w,e){
 }
 
 function workbookFollowupHTML(l,w){
+ const draft=getLeadDraft(l.id,w);for(const [field,value]of Object.entries(leadValues(w)))if(!Object.hasOwn(draft.changes,field))draft.base[field]=value;w={...w,...draft.changes};
  const members=activeUsers(),historic=w.ownerId&&!members.some(u=>u.id===w.ownerId);
  const conversion=[['commitment','Toezegging ontvangen'],['calculation','Klaar voor calculatie']];
  const notes=w.notes.map(n=>({at:n.createdAt,author:n.authorName,title:'Gespreksnotitie',detail:n.text}));
@@ -450,7 +509,7 @@ function workbookFollowupHTML(l,w){
    <div class="section-heading"><h4>Volgende actie</h4>${btn('Terugbellen plannen','callback','ghost small',`data-id="${esc(l.id)}"`)}</div>
    ${w.callbacks.filter(c=>!c.done).sort((a,b)=>Date.parse(a.dueAt)-Date.parse(b.dueAt)).map(c=>callbackCard({...c,lead:l},true)).join('')||'<p class="muted">Geen terugbelafspraak gepland.</p>'}
   </div>
-  <form id="note-form" class="workbook-note"><input type="hidden" name="leadId" value="${esc(l.id)}"><label class="field"><span>Gespreksnotitie</span><textarea name="text" placeholder="Wat is besproken? Wat is de volgende stap?" maxlength="4000" required rows="3"></textarea></label><button class="button primary small" type="submit">Notitie toevoegen</button></form>
+  <form id="note-form" class="workbook-note"><input type="hidden" name="leadId" value="${esc(l.id)}"><label class="field"><span>Gespreksnotitie</span><textarea name="text" placeholder="Wat is besproken? Wat is de volgende stap?" maxlength="4000" required rows="3">${esc(draft.note)}</textarea></label><button class="button primary small" type="submit">Notitie toevoegen</button></form>
   <div class="workbook-checks">${conversion.map(([key,label])=>`<label><input type="checkbox" data-work="${key}" data-id="${esc(l.id)}" ${w[key]?'checked':''}> ${label}</label>`).join('')}</div>
   <div class="workbook-activity"><h4>Activiteit <span class="badge neutral">${activity.length}</span></h4>
    ${activity.map(item=>`<article class="note"><div class="note-meta"><strong>${esc(item.title)} · ${esc(item.author)}</strong><time>${fmt(item.at)}</time></div>${item.detail?`<p>${esc(item.detail).replace(/\n/g,'<br>')}</p>`:''}</article>`).join('')||'<p class="muted">Nog geen gesprekken of notities.</p>'}
@@ -465,6 +524,7 @@ function drawerHTML(){
  return `<div class="detail-overlay" data-action="close-drawer"></div><aside class="detail-drawer workbook-drawer" data-drawer-id="${esc(l.id)}" role="dialog" aria-modal="true" aria-labelledby="detail-title">
   <div class="detail-header workbook-header"><div class="workbook-heading"><div class="workbook-badges">${leadSourceBadges(l)}${l.phase?`<span class="badge neutral">${esc(l.phase)}</span>`:''}${l.demo?'<span class="badge neutral">Demolead</span>':''}</div><h2 id="detail-title" tabindex="-1">${esc(l.title)}</h2>${context?`<p class="muted">${context}</p>`:''}</div><button class="button icon" data-action="close-drawer" aria-label="Lead sluiten">${icon('close')}</button></div>
   <div class="detail-body workbook-columns">${workbookProjectHTML(l)}${workbookContactHTML(l,w,eligible(l))}${workbookFollowupHTML(l,w)}</div>
+  <footer class="workbook-footer"><p class="workbook-save-error" role="alert" hidden></p><button type="button" class="button primary" data-action="save-close-lead">Opslaan en sluiten</button></footer>
  </aside>`;
 }
 function modalShell(title,body,footer='',wide=false,attributes=''){return `<div class="modal-backdrop" data-action="close-modal"></div><section class="modal ${wide?'wide':''}" ${attributes} role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><h2 id="modal-title">${title}</h2><button class="button icon" data-action="close-modal" aria-label="Venster sluiten">${icon('close')}</button></div><div class="modal-body">${body}</div>${footer?`<div class="modal-footer">${footer}</div>`:''}</section>`;}
@@ -539,13 +599,14 @@ case'source-import-revoke':{const s=leadSources().find(s=>s.id===m.id);return s&
 case'source-config':{const s=activeSources().find(s=>s.id===m.id);if(!s)return modalShell('Bron niet gevonden','<p>Deze bron is verwijderd. Sluit dit venster en vernieuw het overzicht.</p>',btn('Sluiten','close-modal'));if(s.id==='outlook')return modalShell('Outlook: het koppelplan','<p>De toekomstige Outlook-connector matcht e-mails met leads via het e-mailadres van het contact, de organisatie en een projectkenmerk.</p><ol><li>De gebruiker geeft zelf toestemming via Microsoft OAuth.</li><li>De connector zoekt binnen de toegestane mailbox en bewaart geheimen op de server.</li><li>Voorgestelde matches worden zichtbaar ter controle; twijfelgevallen vragen een handmatige keuze.</li><li>E-mails en matches blijven bij het eigen bedrijf.</li></ol><span class="badge amber">Nog niet aangesloten · geen toegang tot je mailbox</span>',btn('Begrepen','close-modal','primary'));return sourceEditorHTML(s);}
 
 default:return '';}}
-function closeModal(){const scraper=ui.modal?.type==='source-scraper'||ui.modal?.type==='source-scraper-disconnect';ui.modal=null;if(scraper&&state)render();else renderOverlay();if(lastFocus?.isConnected)lastFocus.focus();}
-function openModal(type,id=null,extra={}){lastFocus=document.activeElement;const draft=type==='edit-company'?{logoDraft:companyLogoSource(state.companies.find(c=>c.id===id)),logoDirty:false,logoBusy:false,logoError:''}:{};ui.modal={type,id,...draft,...extra};renderOverlay();}
+function closeModal(){const scraper=ui.modal?.type==='source-scraper'||ui.modal?.type==='source-scraper-disconnect';ui.modal=null;if(scraper&&state)render();else renderOverlay();if(lastFocus?.isConnected)lastFocus.focus();else if(ui.drawer)$('#detail-title')?.focus({preventScroll:true});}
+function openModal(type,id=null,extra={}){captureLeadDraft();lastFocus=document.activeElement;const draft=type==='edit-company'?{logoDraft:companyLogoSource(state.companies.find(c=>c.id===id)),logoDirty:false,logoBusy:false,logoError:''}:{};ui.modal={type,id,...draft,...extra};renderOverlay();}
 function renderToasts(){if(!$('#toast-root')||!state)return;const due=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()&&!ui.dismissed.includes(currentUser().id+':'+c.id)).slice(0,2);$('#toast-root').innerHTML=[...transient.map(t=>`<div class="toast ${t.tone}"><span class="toast-icon">${icon(t.tone==='amber'?'clock':'check')}</span><div><strong>${t.tone==='amber'?'Let op':'Opgeslagen'}</strong><p>${esc(t.text)}</p></div><button class="toast-close" data-action="dismiss-toast" data-id="${t.id}" aria-label="Melding sluiten">${icon('close')}</button></div>`),...due.map(c=>`<div class="toast callback-toast"><span class="toast-icon">${icon('bell')}</span><div><strong>Terugbelmoment voor ${esc(userName(c.assigneeId).split(' ')[0])}</strong><button class="text-link" data-action="open-lead" data-id="${c.lead.id}">${esc(c.lead.title)}</button><p>${fmt(c.dueAt)} · Gemaakt door ${esc(c.creatorName)}</p></div><button class="toast-close" data-action="dismiss-callback" data-id="${c.id}" aria-label="Terugbelmelding sluiten">${icon('close')}</button></div>`)].join('');}
 
 document.addEventListener('click',async e=>{
  const target=e.target.closest('[data-action],[data-route]');if(!target||target.disabled)return;
  const a=target.dataset.action,id=target.dataset.id;if(target.matches('.kanban-card')&&Date.now()<suppressCardClickUntil){e.preventDefault();return;}
+ if(leadDraft?.saving&&(target.closest('.workbook-drawer')||a==='open-lead'||a==='close-drawer'||target.dataset.route)){e.preventDefault();return;}
  if(target.dataset.route){e.preventDefault();if(!state)return;if(['leads','calls','kanban'].includes(target.dataset.route))resetFilters();navTo(target.dataset.route);return;}
  e.preventDefault();
  try{
@@ -554,8 +615,9 @@ document.addEventListener('click',async e=>{
   if(!state)return;
   switch(a){
    case'menu':ui.mobile=!ui.mobile;$('.sidebar')?.classList.toggle('open',ui.mobile);break;
-   case'open-lead':ui.modal=null;if(ui.drawer!==id)drawerScroll=0;ui.drawer=id;lastFocus=target;renderOverlay();$('#detail-title')?.focus();break;
-   case'close-drawer':ui.drawer=null;renderOverlay();if(lastFocus?.isConnected)lastFocus.focus();break;
+   case'open-lead':openLeadDrawer(id,target);break;
+   case'close-drawer':closeLeadDrawer();break;
+   case'save-close-lead':await saveLeadDraft({close:true});break;
    case'close-modal':closeModal();break;
    case'demo-info':case'account':case'columns':case'new-company':case'invite':case'new-source':case'source-config':case'edit-user':
     if(['new-company','new-source','source-config','edit-user'].includes(a)&&!isChief())throw Error('Deze actie is voor de hoofdbeheerder.');
@@ -642,7 +704,7 @@ document.addEventListener('change',async e=>{
  }
  try{
   if(el.dataset.field){const f=el.dataset.field;if(f==='company'){await switchCompany(el.value);return;}else if(f==='available-check')ui.availability=el.checked?'available':'all';else if(f!=='query')ui[f]=el.value;if(f==='reportCompany')ui.reportSeller='all';render();if(['constructionFrom','constructionTo','deliveryFrom','deliveryTo'].includes(f))document.getElementById(el.id)?.focus();}
-  if(el.dataset.work){const field=el.dataset.work;el.disabled=true;await mutate('workspace.update',{leadId:el.dataset.id,field,value:el.type==='checkbox'?el.checked:el.value||null});render();$('[data-work="'+field+'"]')?.focus();}
+  if(el.dataset.work){const field=el.dataset.work;if(el.closest('.workbook-drawer')&&ui.drawer===el.dataset.id){if(el.isConnected&&!leadDraft?.saving){const draft=getLeadDraft();draftLeadField(draft,field,el.type==='checkbox'?el.checked:field==='ownerId'?el.value||null:el.value);draft.error='';updateLeadSaveUI();}return;}el.disabled=true;await mutate('workspace.update',{leadId:el.dataset.id,field,value:el.type==='checkbox'?el.checked:el.value||null});render();$('[data-work="'+field+'"]')?.focus();}
  }catch(error){if(state){render();toast(error.message,'amber');}}
 });
 let searchTimer;
@@ -651,12 +713,13 @@ function updateLeadSearch(e){
  ui.query=input.value;clearTimeout(searchTimer);if(e.isComposing)return;
  searchTimer=setTimeout(()=>{if(input.isConnected&&input===$('#lead-search')&&!ui.modal&&!ui.drawer)renderLeadSearchResults();},180);
 }
-document.addEventListener('input',updateLeadSearch);
+document.addEventListener('input',e=>{updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
 document.addEventListener('compositionend',updateLeadSearch);
 document.addEventListener('submit',async e=>{
  e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));
  if(form.getAttribute('id')==='login-form'||form.getAttribute('id')==='activation-form'){try{await authenticate(form,data);}catch(error){authError=error.message;renderAuth();}return;}
  if(!state)return;
+ if(form.getAttribute('id')==='note-form'&&ui.drawer){await saveLeadDraft();return;}
  if(form.getAttribute('id')==='source-scraper-form'){try{await connectSourceScraper(form,data);}catch(error){if(state)toast(error.message||'Verbinden is niet gelukt.','amber');}return;}
  const submit=form.querySelector('[type="submit"]');if(submit?.disabled)return;if(submit)submit.disabled=true;
  const modalType=ui.modal?.type;
@@ -686,7 +749,7 @@ document.addEventListener('submit',async e=>{
 function amsterdamToISO(value){const [date,time]=value.split('T'),[y,m,d]=date.split('-').map(Number),[h,minute]=time.split(':').map(Number);const wall=Date.UTC(y,m-1,d,h,minute);let target=wall;for(let i=0;i<3;i++){const parts=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Amsterdam',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(target));const actual=Date.parse(parts.replace(' ','T')+'Z');target+=wall-actual;}const result=new Date(target).toISOString();const verify=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Amsterdam',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(target)).replace(' ','T');if(verify!==value)throw Error('Dit tijdstip bestaat niet door de overgang naar zomertijd. Kies een ander tijdstip.');return result;}
 let dragged=null,suppressCardClickUntil=0;document.addEventListener('dragstart',e=>{const card=e.target.closest('[data-lead]');if(card){suppressCardClickUntil=Infinity;dragged=card.dataset.lead;e.dataTransfer.setData('text/plain',dragged);e.dataTransfer.effectAllowed='move';}});document.addEventListener('dragover',e=>{const col=e.target.closest('[data-column]');if(col&&dragged){e.preventDefault();col.dataset.dragOver='true';}});document.addEventListener('dragleave',e=>{const col=e.target.closest('[data-column]');if(col&&!col.contains(e.relatedTarget))delete col.dataset.dragOver;});document.addEventListener('drop',async e=>{const col=e.target.closest('[data-column]');if(!col||!dragged)return;e.preventDefault();const leadId=dragged;suppressCardClickUntil=Date.now()+250;dragged=null;try{await mutate('workspace.update',{leadId,field:'status',value:col.dataset.column});render();}catch(error){if(state){render();toast(error.message,'amber');}}});
 document.addEventListener('dragend',()=>{suppressCardClickUntil=Date.now()+250;dragged=null;document.querySelectorAll('[data-drag-over]').forEach(e=>delete e.dataset.dragOver);});
-document.addEventListener('keydown',e=>{const card=e.target.closest('.kanban-card[role=button]');if(card&&e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();card.click();return;}if(e.key==='Escape'){if(ui.modal)closeModal();else if(ui.drawer){ui.drawer=null;renderOverlay();if(lastFocus?.isConnected)lastFocus.focus();}}if(e.key==='Tab'&&(ui.modal||ui.drawer)){const root=$('.modal')||$('.detail-drawer'),items=[...root.querySelectorAll('a[href],button:not([disabled]),input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea')].filter(x=>x.offsetParent!==null),first=items[0],last=items.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
+document.addEventListener('keydown',e=>{const card=e.target.closest('.kanban-card[role=button]');if(card&&e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();card.click();return;}if(e.key==='Escape'){if(ui.modal)closeModal();else if(ui.drawer)closeLeadDrawer();}if(e.key==='Tab'&&(ui.modal||ui.drawer)){const root=$('.modal')||$('.detail-drawer'),items=[...root.querySelectorAll('a[href],button:not([disabled]),input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea')].filter(x=>x.offsetParent!==null),first=items[0],last=items.at(-1);if(!items.length){e.preventDefault();return;}if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
 window.addEventListener('hashchange',()=>{const r=location.hash.slice(1);if(routes.some(x=>x[0]===r)&&r!==ui.route){ui.route=r;ui.drawer=null;ui.modal=null;render();}});
 
 function csv(name,rows){const cell=v=>{let value=String(v??'');if(/^[=+\-@\t\r]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"';};const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('Je export is klaargezet als CSV-bestand.');}

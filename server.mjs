@@ -359,6 +359,34 @@ export function createApp(options={}){
     break;
    }
    case'workspace.update':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');w[field]=field==='ownerId'?(p.value||null):p.value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);break;}
+   case'workspace.save':{
+    const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),changes=p.changes;
+    const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype;
+    if(!plain(changes)||Object.keys(changes).some(field=>!['status','priority','ownerId','commitment','calculation'].includes(field)))fail(400,'Geef geldige opvolgvelden op.');
+    const values={...changes};
+    for(const [field,value]of Object.entries(values)){
+     if(field==='status'&&!company.columns.some(c=>c.id===value))fail(400,'Kies een geldige Kanban-status.');
+     if(field==='priority'&&!['high','medium','low'].includes(value))fail(400,'Kies een geldige prioriteit.');
+     if(field==='ownerId'){
+      if(value!==null&&typeof value!=='string')fail(400,'Kies een geldige verantwoordelijke verkoper.');
+      values.ownerId=value||null;if(values.ownerId&&values.ownerId!==w.ownerId)requireMember(s,values.ownerId,cid);
+     }
+     if(['commitment','calculation'].includes(field)&&typeof value!=='boolean')fail(400,'Gebruik een geldig vinkje.');
+    }
+    let note,noteAdded=false;
+    if(p.note!==undefined){
+     if(!plain(p.note)||Object.keys(p.note).some(key=>!['id','text'].includes(key))||typeof p.note.id!=='string'||!/^note-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.note.id))fail(400,'Geef een geldige gespreksnotitie op.');
+     note={id:p.note.id.toLowerCase(),text:text(p.note.text,'Notitie',4000)};
+     const existing=w.notes.find(entry=>entry.id===note.id);
+     if(existing&&(existing.authorId!==actor.id||existing.text!==note.text))fail(409,'Deze gespreksnotitie is al met andere inhoud opgeslagen.');
+     noteAdded=!existing;
+    }
+    const now=iso(Date.now());let changed=false;
+    for(const [field,value]of Object.entries(values))if(w[field]!==value){w[field]=value;changed=true;if(['commitment','calculation'].includes(field))w[field+'At']=value?now:null;}
+    if(noteAdded){w.notes.push({...note,authorId:actor.id,authorName:actor.name,createdAt:now});if(!Object.hasOwn(values,'ownerId')&&w.ownerId==null&&actor.companyId===cid)w.ownerId=actor.id;}
+    if(changed||noteAdded)addFeed(s,actor,cid,noteAdded?`Gespreksnotitie toegevoegd: ${lead.title}`:`Opvolging bijgewerkt: ${lead.title}`,lead.id);
+    result={saved:true,noteAdded};break;
+   }
    case'note.add':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id);w.notes.push({id:id('note'),text:text(p.text,'Notitie',4000),authorId:actor.id,authorName:actor.name,createdAt:iso(Date.now())});w.ownerId??=actor.companyId===cid?actor.id:null;addFeed(s,actor,cid,`Gespreksnotitie toegevoegd: ${lead.title}`,lead.id);break;}
    case'call.record':{
     requireLead(s,p.leadId);const workspace=getWorkspace(s,cid,p.leadId),previousOwner=workspace.ownerId;

@@ -4,6 +4,8 @@ Nederlandstalig leadbeheer met een centrale leadvoorraad en eigen opvolging per 
 
 Open een lead door op de hele Kanban-kaart te klikken, of gebruik Enter of de spatiebalk. De kolom Opvolgen sorteert op het vroegste open terugbelmoment van het actieve bedrijf. Afgehandelde afspraken tellen niet mee; leads zonder afspraak staan onderaan. Slepen blijft beschikbaar om een status te wijzigen.
 
+Gebruik rechtsonder in de leadpop-up **Opslaan en sluiten** om gewijzigde opvolgvelden en een nog niet toegevoegde gespreksnotitie samen op te slaan. Na bevestiging door de server sluit de pop-up en keert de gebruiker terug naar dezelfde zoekopdracht, filters en scrollpositie. Bij een opslagfout blijft de invoer beschikbaar in de pop-up. Een herhaalde opslag na een verbindingsfout maakt dezelfde notitie niet dubbel aan. **Notitie toevoegen** slaat de huidige opvolging en notitie op en houdt de pop-up open; sluiten met het kruisje annuleert de resterende conceptwijzigingen.
+
 ## Aanmelden
 
 Op het inlogscherm kun je **Aangemeld blijven** aanvinken. De aanmelding blijft dan maximaal 30 dagen op hetzelfde apparaat bewaard. Zonder vinkje gebruikt de app een sessiecookie en vervalt de toegang op de server na 12 uur. Uitloggen beëindigt de betreffende sessie direct. Een geldige sessie opent het dashboard ook wanneer je opnieuw naar `/login` gaat.
