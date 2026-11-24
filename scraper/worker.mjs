@@ -1,7 +1,7 @@
 import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
 import {createBouwberichtenApi,enrichLeadWithPresentation,mapProjectToLead} from './bouwberichten-api.mjs';
-import {loginBouwberichten,sanitizeAuthDiagnostic} from './bouwberichten-auth.mjs';
+import {IMAGE_FAILURE_REASONS,loginBouwberichten,sanitizeAuthDiagnostic} from './bouwberichten-auth.mjs';
 
 export class WorkerError extends Error{
  constructor(code='scrape_error',status=null){super('Het ophalen is onderbroken.');this.name='WorkerError';this.code=code;this.status=status;}
@@ -69,7 +69,7 @@ export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,
   session=await authenticate({username:job.username,password:job.password,filterUrl:job.filterUrl,signal:combined});
   const api=createApi({authorizedRequest:createPacedRequest(session.authorizedRequest,{signal:combined,sleepImpl}),signal:combined});
   let processed=0,batch=0,pageNumber=0,total=null;const seen=new Set(),organisationCache=new Map(),amountPerPage=20;
-  const workbookCounts={contractorsWithPhone:0,images:0};
+  const workbookCounts={contractorsWithPhone:0,images:0,imageFailures:{}};
   while(total===null||processed<Math.min(total,job.limit)){
    combined.throwIfAborted();const listing=await api.listProjects({filterParameters:job.filterParameters,pageNumber,amountPerPage,signal:combined});
    if(total===null)total=listing.total;
@@ -89,9 +89,11 @@ export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,
     const missing=ids.filter(id=>!organisationCache.has(id));
     if(missing.length){const organisations=await api.getOrganisations(missing,{signal:combined});for(const id of missing)organisationCache.set(id,null);for(const organisation of organisations)organisationCache.set(String(organisation.id),organisation);}
     const lead=mapLead(project,{organisations:ids.map(id=>organisationCache.get(id)).filter(Boolean),preferredRoles:['Hoofdaannemer'],includeDetails:true});
-    enrichLeadWithPresentation(lead,await session.projectPresentation?.(identity,lead.title));
+    const presentation=await session.projectPresentation?.(identity,project.name,{hasImage:Array.isArray(project.images)?project.images.length>0:undefined});
+    enrichLeadWithPresentation(lead,presentation);
     if(lead.projectDetails?.primaryRole?.toLowerCase()==='hoofdaannemer'&&lead.phone)workbookCounts.contractorsWithPhone++;
     if(lead.projectImage)workbookCounts.images++;
+    else if(session.projectPresentation){const reason=IMAGE_FAILURE_REASONS.includes(presentation?.imageStatus)?presentation.imageStatus:'capture_failed';workbookCounts.imageFailures[reason]=(workbookCounts.imageFailures[reason]??0)+1;}
     const bytes=Buffer.byteLength(JSON.stringify(lead))+1;
     if(items.length&&itemBytes+bytes>MAX_BATCH_ITEMS_BYTES)await flush();
     items.push(lead);itemBytes+=bytes;
@@ -110,7 +112,8 @@ export async function runWorker({config=loadWorkerConfig(),signal,fetchImpl=fetc
  while(!signal?.aborted){
   try{const job=await broker.claim();if(job){const result=await run(job,{broker,signal,sleepImpl}),diagnostic=result.failed?sanitizeAuthDiagnostic(result.diagnostic):undefined;
    const counts=result.workbookCounts;
-   const workbookCounts=counts&&Object.fromEntries(['contractorsWithPhone','images'].filter(key=>Number.isSafeInteger(counts[key])&&counts[key]>=0&&counts[key]<=result.processed).map(key=>[key,counts[key]]));
+   const imageFailures=counts&&Object.fromEntries(IMAGE_FAILURE_REASONS.filter(key=>Number.isSafeInteger(counts.imageFailures?.[key])&&counts.imageFailures[key]>0&&counts.imageFailures[key]<=result.processed).map(key=>[key,counts.imageFailures[key]]));
+   const workbookCounts=counts&&{...Object.fromEntries(['contractorsWithPhone','images'].filter(key=>Number.isSafeInteger(counts[key])&&counts[key]>=0&&counts[key]<=result.processed).map(key=>[key,counts[key]])),...imageFailures&&Object.keys(imageFailures).length&&{imageFailures}};
    logger.info(JSON.stringify({event:result.failed?'job_failed':'job_finished',...result.failed?{code:['login_required','source_error','scrape_error'].includes(result.code)?result.code:'scrape_error',...diagnostic&&{diagnostic}}:{processed:result.processed,total:result.total,...workbookCounts&&{workbookCounts}}}));continue;}}
   catch(error){if(signal?.aborted)break;logger.error(JSON.stringify({event:'broker_unavailable',status:error?.status??null}));}
   try{await wait(15000,signal,sleepImpl);}catch{break;}

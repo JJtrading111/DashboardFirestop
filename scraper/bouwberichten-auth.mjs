@@ -16,6 +16,79 @@ export class SourceLoginError extends Error{
  constructor(reason='unknown',stage='unknown',context={}){super('De bronaanmelding vraagt om aandacht. Verbind de bron opnieuw.');this.name='SourceLoginError';this.code='login_required';this.diagnostic=sanitizeAuthDiagnostic({...context,reason,stage});}
 }
 
+export const IMAGE_FAILURE_REASONS=Object.freeze(['not_found','placeholder','not_loaded','page_unavailable','page_mismatch','capture_failed','too_large']);
+
+export async function readProjectPresentation(page,projectId,title,{signal,hasImage}={}){
+ if(!/^\d{1,16}$/.test(String(projectId))||typeof title!=='string'||!title.trim())return;
+ const sourceTitle=title.replace(/\s+/g,' ').trim(),url=PORTAL_ORIGIN+'/projecten/'+projectId;
+ let main,result={};
+ for(let attempt=0;attempt<2;attempt++){
+  try{
+   signal?.throwIfAborted();
+   await page.goto(url,{waitUntil:'domcontentloaded',timeout:6000});
+   if(page.url()!==url)return{imageStatus:'page_mismatch'};
+   main=page.locator('#main');
+   await main.getByRole('heading',{name:sourceTitle,exact:true}).waitFor({state:'visible',timeout:3000});
+   break;
+  }catch{signal?.throwIfAborted();if(attempt===1)return{imageStatus:'page_unavailable'};
+   // Allow a failed Chromium error-page navigation to settle before the single retry.
+   await delay(250,undefined,{signal});
+  }
+ }
+ try{
+  result=await main.evaluate(root=>{
+   const terms=[...root.querySelectorAll('dt')].filter(term=>term.getClientRects().length),info={};
+   for(const term of terms){
+    const label=term.textContent.trim().replace(/:$/,'');
+    if(!['Plan','Deelplan','Start','Oplevering','Oppervlakte','Bouwlagen van - t/m','Duurzame eigenschappen','Project website'].includes(label))continue;
+    const value=term.nextElementSibling;
+    if(value?.tagName==='DD')info[label]=label==='Project website'?value.querySelector('a[href]')?.href:value.textContent.trim();
+   }
+   const contractors=terms.filter(term=>term.textContent.trim()==='Hoofdaannemer');
+   const term=contractors.length===1?contractors[0]:null,card=term?.closest('dl');
+   const value=term?.nextElementSibling,name=value?.tagName==='DD'?value.textContent.trim():'';
+   const byHref=prefix=>card?.querySelector(`a[href^="${prefix}"]`)?.textContent?.trim();
+   const phone=byHref('tel:'),email=byHref('mailto:');
+   const web=[...card?.querySelectorAll('dt')??[]].find(label=>label.textContent.trim()==='Website');
+   const mainContractor=name?{name,phone,email,website:web?.nextElementSibling?.querySelector('a[href]')?.href}:undefined;
+   return{info,mainContractor};
+  },undefined,{timeout:1500});
+ }catch{signal?.throwIfAborted();}
+ let imageStatus='not_found';
+ try{
+  // Empty galleries render a category background, never a project photograph.
+  if(hasImage===false)return{...result,imageStatus};
+  const candidates=main.getByRole('img',{name:sourceTitle,exact:true}).and(main.locator('img.ImageSlider__image')).filter({visible:true});
+  if(await candidates.count()===0&&await main.locator('.ImageSlider__placeholder').first().isVisible())return{...result,imageStatus};
+  const image=candidates.first();
+  await image.waitFor({state:'visible',timeout:3000});
+  imageStatus='not_loaded';
+  for(let attempt=0;attempt<2;attempt++){
+   // The portal marks project photographs loading="lazy"; visibility alone does not start loading.
+   await image.scrollIntoViewIfNeeded({timeout:1500});
+   const state=await image.evaluate(async element=>{
+    const placeholder=()=>{try{return /\/images\/placeholder-[^/]+\.(?:jpe?g|png|webp)$/i.test(new URL(element.currentSrc||element.src,element.baseURI).pathname);}catch{return false;}};
+    const loaded=()=>element.complete&&element.naturalWidth>0&&element.naturalHeight>0;
+    if(!placeholder()&&!loaded())await new Promise(resolve=>{
+     let timer;const finish=()=>{clearTimeout(timer);element.removeEventListener('load',finish);element.removeEventListener('error',finish);resolve();};
+     timer=setTimeout(finish,1800);element.addEventListener('load',finish,{once:true});element.addEventListener('error',finish,{once:true});
+     element.decode().then(finish).catch(()=>{if(element.complete)finish();});if(loaded())finish();
+    });
+    return{loaded:loaded(),placeholder:placeholder()};
+   },undefined,{timeout:2500});
+   if(state.placeholder)return{...result,imageStatus:'placeholder'};
+   if(!state.loaded)continue;
+   imageStatus='capture_failed';
+   for(const quality of [70,50,30]){
+    const bytes=await image.screenshot({type:'jpeg',quality,timeout:2500,animations:'disabled',scale:'css'});
+    if(bytes.length<=256*1024)return{...result,projectImage:'data:image/jpeg;base64,'+bytes.toString('base64'),imageStatus:'captured'};
+   }
+   return{...result,imageStatus:'too_large'};
+  }
+ }catch{signal?.throwIfAborted();}
+ return{...result,imageStatus};
+}
+
 // Public evidence: https://vmnb2contentprod.blob.core.windows.net/static/unified.html
 // and its static/bundle.js bindings. Custom: #enterEmail_email/#enterEmail_next,
 // then #login-password_password/#login-password_next. Other password fields
@@ -93,45 +166,10 @@ export async function loginBouwberichten({username,password,filterUrl,signal,chr
    }
    return response;
   }
-  async function projectPresentation(projectId,title){
+   async function projectPresentation(projectId,title,{hasImage}={}){
    if(!/^\d{1,16}$/.test(String(projectId))||!title||closed)return;
-   const url=PORTAL_ORIGIN+'/projecten/'+projectId;
-   let result;
-   try{
-    photoPage??=await context.newPage();
-    await photoPage.goto(url,{waitUntil:'domcontentloaded',timeout:6000});
-    if(photoPage.url()!==url)return;
-    const main=photoPage.locator('#main');
-    await main.getByRole('heading',{name:title,exact:true}).waitFor({state:'visible',timeout:3000});
-    result=await main.evaluate(root=>{
-     const terms=[...root.querySelectorAll('dt')].filter(term=>term.getClientRects().length);
-     const info={};
-     for(const term of terms){
-      const label=term.textContent.trim().replace(/:$/,'');
-      if(!['Plan','Deelplan','Start','Oplevering','Oppervlakte','Bouwlagen van - t/m','Duurzame eigenschappen','Project website'].includes(label))continue;
-      const value=term.nextElementSibling;
-      if(value?.tagName==='DD')info[label]=label==='Project website'?value.querySelector('a[href]')?.href:value.textContent.trim();
-     }
-     const contractors=terms.filter(term=>term.textContent.trim()==='Hoofdaannemer');
-     const term=contractors.length===1?contractors[0]:null,card=term?.closest('dl');
-     const value=term?.nextElementSibling,name=value?.tagName==='DD'?value.textContent.trim():'';
-     const byHref=prefix=>card?.querySelector(`a[href^="${prefix}"]`)?.textContent?.trim();
-     const phone=byHref('tel:'),email=byHref('mailto:');
-     const web=[...card?.querySelectorAll('dt')??[]].find(label=>label.textContent.trim()==='Website');
-     const mainContractor=name?{name,phone,email,website:web?.nextElementSibling?.querySelector('a[href]')?.href}:undefined;
-     return{info,mainContractor};
-    },undefined,{timeout:1500});
-    const image=main.getByRole('img',{name:title,exact:true}).filter({visible:true}).first();
-    await image.waitFor({state:'visible',timeout:3000});
-    const loaded=await image.evaluate(async element=>{
-     await Promise.race([element.decode().catch(()=>{}),new Promise(resolve=>setTimeout(resolve,1200))]);
-     return element.naturalWidth>0&&element.naturalHeight>0;
-    },undefined,{timeout:1500});
-    if(!loaded)return result;
-    const bytes=await image.screenshot({type:'jpeg',quality:70,timeout:2500,animations:'disabled',scale:'css'});
-    if(bytes.length<=256*1024)result.projectImage='data:image/jpeg;base64,'+bytes.toString('base64');
-   }catch{signal?.throwIfAborted();}
-   return result;
+    try{photoPage??=await context.newPage();return await readProjectPresentation(photoPage,projectId,title,{signal,hasImage});}
+    catch{signal?.throwIfAborted();return{imageStatus:'page_unavailable'};}
   }
   return{authorizedRequest,projectPresentation,close};
  }catch(error){await close();if(signal?.aborted)throw signal.reason;throw error instanceof SourceLoginError?error:failure(stage==='browser_start'?'browser_start_failed':stage==='portal_navigation'?'navigation_failed':['email_form','email_submitted','password_form','password_submitted'].includes(stage)?'control_interaction_failed':'unexpected_error');}

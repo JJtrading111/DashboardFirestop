@@ -66,6 +66,9 @@ test('an existing imported lead receives project details and a private image wit
  const fresh={...old,...item(),projectImage:photo,sourceUpdatedAt:'2026-11-24T00:00:00Z'};
  assert.deepEqual((await ingest('enrich',fresh)).data.counts,{created:0,updated:1,unchanged:0});
  assert.deepEqual((await ingest('repeat',fresh)).data.counts,{created:0,updated:0,unchanged:1});
+ const imageBeforeMiss=(await snapshot()).leads[0].projectImageUrl,withoutImage={...fresh};delete withoutImage.projectImage;
+ assert.deepEqual((await ingest('photo-temporarily-missing',withoutImage)).data.counts,{created:0,updated:0,unchanged:1});
+ assert.equal((await snapshot()).leads[0].projectImageUrl,imageBeforeMiss,'A missed photo capture keeps the previously stored project photograph');
  assert.deepEqual((await ingest('stale',{...fresh,sourceUpdatedAt:old.sourceUpdatedAt,projectDetails:{...fresh.projectDetails,scope:'Verouderd'}})).data.counts,{created:0,updated:0,unchanged:1});
  const state=await snapshot(),enriched=state.leads[0];
  assert.equal(enriched.id,lead.id);assert.equal(enriched.projectDetails.scope,'20 woningen');

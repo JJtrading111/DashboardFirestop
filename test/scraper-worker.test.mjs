@@ -25,6 +25,31 @@ test('worker accepts only an HTTPS dashboard origin and validates secrets withou
  assert.throws(()=>loadWorkerConfig({...config,SCRAPER_WORKER_TOKEN:'secret'}),error=>!error.message.includes('secret'));
 });
 
+test('presentation lookup receives full source names and only image availability hints, with fixed aggregate failure reasons',async()=>{
+ const api=fixtureApi({count:2}),broker=fakeBroker(),lookups=[],longName='Volledige projectnaam '+ 'x'.repeat(160);
+ api.getProject=async id=>({id,name:longName,involvements:[],...(id===1?{images:[]}: {})});
+ const dependencies=jobDependencies(api,broker);
+ dependencies.options.mapLead=undefined;
+ dependencies.session.projectPresentation=async(...args)=>{lookups.push(args);return{imageStatus:args[0]==='1'?'not_found':'https://secret.example/private-title'};};
+ const result=await runJob(job,dependencies.options);
+ assert.equal(result.processed,2);assert.deepEqual(lookups,[['1',longName,{hasImage:false}],['2',longName,{hasImage:undefined}]]);
+ assert.deepEqual(result.workbookCounts.imageFailures,{not_found:1,capture_failed:1});
+ const items=broker.calls.find(call=>call[0]==='batch')[3];
+ assert.ok(items.every(item=>item.title.length===150));
+ assert.ok(!JSON.stringify(result).includes('secret.example'));
+});
+
+test('image diagnostic logging accepts only fixed reason names and bounded integer counters',async()=>{
+ const controller=new AbortController(),messages=[];let claims=0;
+ await runWorker({config:{dashboardUrl:'https://dashboard.example.test',workerToken:'t'.repeat(43)},signal:controller.signal,
+  fetchImpl:async()=>{if(++claims===1)return json({job});controller.abort();return json({job:null});},sleepImpl:async()=>{},
+  logger:{info:message=>messages.push(message),error:message=>messages.push(message)},
+  run:async()=>({processed:2,total:2,workbookCounts:{images:1,contractorsWithPhone:0,imageFailures:{not_found:1,placeholder:3,not_loaded:-1,page_unavailable:1.5,'https://private.example/token':2}}})});
+ const message=messages.map(value=>{try{return JSON.parse(value);}catch{return null;}}).find(value=>value?.event==='job_finished');
+ assert.deepEqual(message.workbookCounts,{images:1,contractorsWithPhone:0,imageFailures:{not_found:1}});
+ assert.equal(messages.join('').includes('private.example'),false);
+});
+
 test('test job imports exactly five real mapped details, shares organisation lookup, and closes its browser',async()=>{
  const api=fixtureApi(),broker=fakeBroker(),{session,options}=jobDependencies(api,broker);
  assert.deepEqual(await runJob(job,options),{processed:5,total:24});
