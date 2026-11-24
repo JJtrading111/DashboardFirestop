@@ -123,6 +123,17 @@ export function createApp(options={}){
  if(process.env.NODE_ENV==='production'&&!publicOrigin)throw Error('APP_URL is required in production.');
  if(publicOrigin&&new URL(publicOrigin).origin!==publicOrigin.replace(/\/$/,''))throw Error('APP_URL must contain only the public origin.');
  const canonicalOrigin=publicOrigin?new URL(publicOrigin):null;
+ const aliasesValue=options.publicOriginAliases??process.env.APP_URL_ALIASES??'',aliasOrigins=new Map();
+ if(typeof aliasesValue!=='string')throw Error('APP_URL_ALIASES must be a comma-separated list of exact http(s) origins.');
+ if(aliasesValue.trim()){
+  const values=aliasesValue.split(',').map(value=>value.trim());
+  if(!canonicalOrigin||values.length>8)throw Error('APP_URL_ALIASES requires APP_URL and at most eight exact origins.');
+  for(const value of values){let alias;try{alias=new URL(value);}catch{throw Error('APP_URL_ALIASES must contain only exact http(s) origins.');}
+   if(!['http:','https:'].includes(alias.protocol)||alias.origin!==value||value.includes('*')||alias.origin===canonicalOrigin.origin||aliasOrigins.has(alias.origin))throw Error('APP_URL_ALIASES must contain unique exact http(s) origins distinct from APP_URL.');
+   aliasOrigins.set(alias.origin,alias.host);
+  }
+ }
+ const aliasHosts=new Set(aliasOrigins.values());
  if(dataDir!==':memory:')mkdirSync(dataDir,{recursive:true});
  const db=new DatabaseSync(dataDir===':memory:'?':memory:':path.join(dataDir,'dashboard.sqlite'));
  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -231,7 +242,10 @@ export function createApp(options={}){
  function newSession(user,{rememberMe=false}={}){const raw=token(),csrf=token(),now=Date.now(),duration=rememberMe?REMEMBERED_SESSION_AGE:SESSION_AGE;db.prepare('DELETE FROM sessions WHERE expires_at<=?').run(now);db.prepare('INSERT INTO sessions(token_hash,user_id,csrf,created_at,expires_at) VALUES(?,?,?,?,?)').run(digest(raw),user.id,csrf,now,now+duration);return{raw,csrf,user,cookieMaxAge:rememberMe?duration/1000:null};}
  function setCookie(res,raw,{maxAge=null,remove=false}={}){const persistence=remove?'; Max-Age=0':maxAge===null?'':`; Max-Age=${maxAge}`;res.setHeader('Set-Cookie',`bouw_session=${raw}; Path=/; HttpOnly; SameSite=Lax${persistence}${secureCookies?'; Secure':''}`);}
  function authorized(req){const session=cookieSession(req);if(!session)fail(401,'Meld je aan om verder te gaan.');return session;}
- function checkOrigin(req){const origin=req.headers.origin;if(!origin){if(req.headers['sec-fetch-site']==='cross-site')fail(403,'Dit verzoek is niet toegestaan.');return;}const expected=publicOrigin?new URL(publicOrigin).origin:`${secureCookies?'https':'http'}://${req.headers.host}`;if(origin!==expected)fail(403,'Dit verzoek is niet toegestaan.');}
+ function checkOrigin(req){const origin=req.headers.origin;if(!origin){if(req.headers['sec-fetch-site']==='cross-site')fail(403,'Dit verzoek is niet toegestaan.');return;}const expected=canonicalOrigin?.origin??`${secureCookies?'https':'http'}://${req.headers.host}`,host=req.headers.host?.toLowerCase(),aliasHost=aliasOrigins.get(origin);
+  if(origin===expected&&(!aliasOrigins.size||host===canonicalOrigin.host)||aliasHost&&host===aliasHost)return;
+  fail(403,'Dit verzoek is niet toegestaan.');
+ }
  function csrf(req,session){checkOrigin(req);const value=req.headers['x-csrf-token'],actual=typeof value==='string'?Buffer.from(value):Buffer.alloc(0),expected=Buffer.from(session.csrf);if(actual.length!==expected.length||!timingSafeEqual(actual,expected))fail(403,'Je sessie is gewijzigd. Vernieuw de pagina en probeer opnieuw.');}
  function scoped(s,actor,cid){
   const chief=actor.role==='hoofdbeheerder';if(!chief&&cid!==actor.companyId)fail(403,'Je kunt alleen je eigen bedrijf openen.');if(chief&&!cid)cid=actor.companyId||s.companies[0]?.id;if(!s.companies.some(c=>c.id===cid))fail(404,'Dit bedrijf bestaat niet.');
@@ -416,7 +430,7 @@ export function createApp(options={}){
  const handler=async(req,res)=>{try{
   const url=new URL(req.url,'http://localhost');
   // Compare the actual host only: HTTPS terminates at Railway before this server.
-  if(canonicalOrigin&&['GET','HEAD'].includes(req.method)&&assets.has(url.pathname)&&req.headers.host?.toLowerCase()!==canonicalOrigin.host){headers(res);res.writeHead(308,{Location:canonicalOrigin.origin+url.pathname+url.search});res.end();return;}
+  if(canonicalOrigin&&['GET','HEAD'].includes(req.method)&&assets.has(url.pathname)&&req.headers.host?.toLowerCase()!==canonicalOrigin.host&&!aliasHosts.has(req.headers.host?.toLowerCase())){headers(res);res.writeHead(308,{Location:canonicalOrigin.origin+url.pathname+url.search});res.end();return;}
   if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true});
   if(url.pathname.startsWith('/api/')){
    headers(res,true);const ip=req.socket.remoteAddress||'unknown';

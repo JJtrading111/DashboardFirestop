@@ -58,6 +58,7 @@ Benodigde omgevingsvariabelen:
 | `PORT` | Bijvoorbeeld `3000`; de server luistert op alle interfaces |
 | `DATA_DIR` | `/data`, op het persistente volume |
 | `APP_URL` | De exacte publieke HTTPS-origin van de app, zonder pad |
+| `APP_URL_ALIASES` | Optioneel: extra vertrouwde origins, gescheiden door komma's. Houd hiermee tijdens een domeinoverstap het oude dashboardadres bereikbaar. Geen paden of wildcards. |
 | `ADMIN_EMAIL` | E-mailadres voor het eerste beheeraccount |
 | `ADMIN_NAME` | Voorgestelde naam voor het eerste beheeraccount |
 | `ADMIN_PASSWORD` | Beheerwachtwoord van 12–256 tekens; activeert de eigenaar rechtstreeks voor aanmelden via `/login` |
@@ -71,6 +72,8 @@ Met `ADMIN_PASSWORD` ingesteld beheert Railway de bestaande eigenaarlogin. De se
 Als alternatief zonder `ADMIN_PASSWORD` heeft de eerste activatielink de vorm `APP_URL/#activate=BOOTSTRAP_TOKEN`. Verstrek deze alleen aan de eigenaar. De server maakt de eerste uitnodiging één keer aan en heractiveert haar niet bij een herstart. Een rechtstreeks ingestelde beheerlogin maakt een nog openstaande eigenaaruitnodiging ongeldig. Uitnodigingsgeheimen staan in een URL-fragment en worden door de client na het openen uit de adresbalk verwijderd.
 
 Gebruik één replica: SQLite en het volume horen bij dezelfde service. Gezondheidscontrole: `/health`.
+
+Bij een eigen domein beheert Cloud86 de DNS en blijft Railway de app en database hosten. Voeg het domein toe aan de bestaande Railway-webservice op poort 3000 en neem de opgegeven CNAME- en verificatie-TXT-records over bij Cloud86. Zet `APP_URL` op de nieuwe HTTPS-origin en behoud het oude Railway-adres zo nodig in `APP_URL_ALIASES`. Een vertrouwde alias blijft zelfstandig werken; andere hosts verwijzen voor openbare pagina's naar `APP_URL`. Browserwijzigingen via een alias vereisen een Origin die bij de werkelijke Host hoort. De scraper-API en gezondheidscontrole worden niet doorgestuurd. De worker mag zijn bestaande `DASHBOARD_URL` behouden. Sessiecookies gelden per host, dus op het nieuwe domein melden gebruikers zich eenmalig opnieuw aan.
 
 De aparte worker gebruikt `scraper/Dockerfile`, zonder publiek domein of datavolume. Railway gebruikt rechtstreeks ingestelde service-instellingen (startopdracht `node worker.mjs`, één replica, herstart bij fouten); de oude Config-as-Code-koppeling is leeg en de oude `railway.json` is verwijderd. Stel `DASHBOARD_URL`, dezelfde `SCRAPER_WORKER_TOKEN` en `RAILWAY_DOCKERFILE_PATH=scraper/Dockerfile` in. De webservice blijft de enige schrijver van SQLite. Zie de scraperhandleiding voor aanmelding, proef, planning, limieten en intrekken van toegang.
 
