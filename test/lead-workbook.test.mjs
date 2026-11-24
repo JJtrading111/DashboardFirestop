@@ -126,4 +126,19 @@ test('shared lead opening renders the workbook and both flags directly below the
  const html=vm.runInContext("state=initialState;ui.drawer='lead-workbook';ui.companyId='company';ui.userId='seller';drawerHTML();",context);
  assert.match(html,/workbook-columns/);assert.match(html,/Hoofdaannemer[\s\S]*Voorbeeldaannemer[\s\S]*tel:0302222222/);
  assert.match(html,/Notitie toevoegen<\/button><\/form>\s*<div class="workbook-checks">[\s\S]*Toezegging ontvangen[\s\S]*Klaar voor calculatie/);
+ const withDate={...lead,projectDetails:{...lead.projectDetails,scheduleStart:'2027-01-10'}};
+ const later={...withDate,id:'lead-later',projectDetails:{scheduleStart:'2027-02-15'}};
+ const unknown={...lead,id:'lead-undated',projectDetails:null};
+ context.dateLeads=[withDate,later,unknown];
+ vm.runInContext("state.leads=dateLeads;ui.route='leads';ui.constructionFrom='2027-01-10';ui.constructionTo='2027-01-10';",context);
+ for(const route of ['leads','calls']){
+  context.route=route;
+  const results=vm.runInContext("ui.route=route;filteredLeads().map(record=>record.id).join(',');",context);
+  assert.equal(results,'lead-workbook','both overviews include the endpoints and exclude unknown dates while filtering');
+ }
+ const table=vm.runInContext('leadTable(state.leads)',context);
+ assert.match(table,/<th class="construction-start-cell">Start bouw<\/th>/);
+ assert.match(table,/<time datetime="2027-01-10">10 jan 2027<\/time>/);
+ assert.match(table,/<span class="muted">Onbekend<\/span>/);
+ assert.equal(vm.runInContext("resetFilters();filteredLeads().length",context),3);
 });
