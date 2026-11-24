@@ -11,7 +11,7 @@ const selectorKey=value=>value.replace(/["']/g,'');
 // parse HTML: replacing any dialog structure is a test failure, even if a form
 // is later put back. Production polling, rendering and update code remain live.
 function modalFixture(){
- const writes=[],structureWrites=[],intervals=new Map(),requests=[],messages=[];
+ const writes=[],structureWrites=[],intervals=new Map(),requests=[],messages=[],listeners={};
  function node(name,initial={}){
   const attributes=new Map(),children=new Map(),values={textContent:'',className:'',hidden:false,disabled:false,checked:false,scrollTop:0,...initial};
   const result={nodeName:name,dataset:{},isConnected:true,children,
@@ -44,7 +44,7 @@ function modalFixture(){
  const title=node('title');fields.set('title',title);modal.children.set('#modal-title',title);modal.children.set('#source-scraper-form',form);modal.children.set('.modal-body',body);modal.children.set('[data-scraper-schedule]',schedule);modal.children.set('.modal-header h2',title);
  for(const action of ['test-source-scraper','run-source-scraper','disconnect-source-scraper'])modal.children.set('[data-action='+action+']',node(action));
  root.children.set('.modal',modal);root.children.set('.detail-body',null);root.children.set('#source-scraper-form',form);
- const document={hidden:false,activeElement:password,body:node('document-body'),addEventListener(){},querySelector(selector){if(selector==='#app')return app;if(selector==='#overlay-root')return root;if(selector==='.modal')return root.children.get('.modal');if(selector==='#source-scraper-form')return form;return modal.querySelector(selector);}};
+ const document={hidden:false,activeElement:password,body:node('document-body'),addEventListener(type,listener){listeners[type]=listener;},querySelector(selector){if(selector==='#app')return app;if(selector==='#overlay-root')return root;if(selector==='.modal')return root.children.get('.modal');if(selector==='#source-scraper-form')return form;return modal.querySelector(selector);}};
  const context=vm.createContext({URL,URLSearchParams,Date,Intl,document,window:{addEventListener(){}},location:{hash:'#sources',pathname:'/',search:'',origin:'https://dashboard.example.test'},localStorage:{getItem:()=>null,setItem(){}},setInterval:(fn,ms)=>{intervals.set(ms,fn);return ms;},requestAnimationFrame:fn=>fn(),fetch:async()=>new Promise(resolve=>requests.push(resolve)),recordToast:(text,tone)=>messages.push({text,tone})});
  assert.equal([...appSource.matchAll(/^initialize\(\);\r?$/gm)].length,1);
  const source=appSource.replace(/^import .* from '\.\/model\.mjs';\r?\n/,'').replace(/^initialize\(\);\r?$/m,'');
@@ -53,13 +53,30 @@ function modalFixture(){
  context.initialState=state;
  new vm.Script(`state=initialState;session={authenticated:true};ui.userId='chief';ui.companyId='company-1';ui.modal={type:'source-scraper',id:'source-a'};renderPage=()=>'';renderToasts=()=>{};toast=(text,tone)=>recordToast(text,tone);globalThis.inspectState=()=>state;globalThis.inspectModal=()=>ui.modal;`).runInContext(context);
  function snapshot(overrides={},sourceOverrides={}){const next=structuredClone(state);Object.assign(next.sources[0].scraper,overrides);Object.assign(next.sources[0],sourceOverrides);return{state:next,userId:'chief',companyId:'company-1'};}
- return{context,root,modal,body,form,username,password,submit,fields,document,writes,structureWrites,requests,messages,snapshot,
+ return{context,root,modal,body,form,username,password,submit,fields,document,writes,structureWrites,requests,messages,snapshot,listeners,
   async respond(index,value){requests[index]({ok:true,json:async()=>value});},
   poll:ms=>intervals.get(ms)(),
   run:code=>vm.runInContext(code,context),
   assertPreserved(){assert.equal(root.children.get('.modal'),modal);assert.equal(modal.querySelector('#source-scraper-form'),form);assert.equal(form.querySelector('[name=password]'),password);assert.equal(username.value,'edited-user@example.test');assert.equal(password.value,'unsubmitted-secret');assert.equal(password.type,'text');assert.equal(password.selectionStart,4);assert.equal(password.selectionEnd,12);assert.equal(password.selectionDirection,'forward');assert.equal(document.activeElement,password);assert.equal(body.scrollTop,233);assert.deepEqual(structureWrites,[]);},
  };
 }
+
+test('the source card starts the full filter import manually while daily fetching is enabled',async()=>{
+ const f=modalFixture(),calls=[];
+ f.context.recordManual=(...args)=>calls.push(args);
+ f.run(`ui.modal=null;state.sources[0].importEnabled=true;
+  Object.assign(state.sources[0].scraper,{status:'active',lastTestPassed:true,scheduleEnabled:true});
+  openModal=(type,id)=>{ui.modal={type,id};recordManual('open',type,id);};
+  scraperAction=async(type,id)=>{recordManual('queue',type,id);};`);
+ const card=f.run('sourceManualRunButton(state.sources[0])');
+ assert.match(card,/data-action="run-source-scraper"/);assert.doesNotMatch(card,/disabled/);
+ const target={dataset:{action:'run-source-scraper',id:'source-a'},closest(){return this;},matches(){return false;}};
+ await f.listeners.click({target,preventDefault(){}});
+ assert.deepEqual(calls,[['open','source-scraper','source-a'],['queue','source.scraper.run','source-a']]);
+ f.run("state.sources[0].scraper.status='running';");
+ assert.match(f.run('sourceManualRunButton(state.sources[0])'),/disabled title="Er staat al een ophaalronde/);
+ await f.listeners.click({target,preventDefault(){}});assert.equal(calls.length,2);
+});
 
 test('ten-second polling updates status and progress in place while preserving the complete open dialog and an unfinished password',async()=>{
  const f=modalFixture();
