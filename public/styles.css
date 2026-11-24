@@ -188,11 +188,17 @@
 .scraper-schedule{display:grid;grid-template-columns:19px minmax(0,1fr);align-items:start;gap:10px;min-height:44px;padding:10px 0;color:#344f6e;font-size:14px;line-height:1.5;cursor:pointer}
 .scraper-schedule input[type=checkbox]{width:18px;height:18px;min-height:18px;margin:2px 0 0;padding:0;accent-color:#245de4}
 .scraper-schedule strong{display:block;font-size:15px}.scraper-schedule small{display:block;font-size:13px;color:#526c87;line-height:1.6;margin-top:4px;overflow-wrap:anywhere}
+.scraper-schedule-time{display:grid;grid-template-columns:minmax(0,220px) auto;justify-content:start;align-items:end;gap:10px 12px;min-width:0;margin:8px 0 0}
+.scraper-schedule-time>.field{margin:0;min-width:0}.scraper-schedule-time>.field>span{font-size:14px;font-weight:600;line-height:1.5;color:#405a77}
+.scraper-schedule-time input[type=time]{display:block;width:100%;min-width:0;min-height:44px;font-variant-numeric:tabular-nums}
+.scraper-schedule-time>.button{min-height:44px;max-width:100%;margin:0;white-space:normal;text-align:center}
+.scraper-run-panel [data-scraper-schedule-error]{margin:10px 0 0;color:#963e34;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
 .scraper-last-run dl{display:grid;grid-template-columns:minmax(80px,110px) minmax(0,1fr);gap:8px 12px;margin:13px 0;font-size:14px;line-height:1.6}
 .scraper-last-run dt{color:#5b7089}.scraper-last-run dd{margin:0;color:#2c4868;overflow-wrap:anywhere}
 .scraper-counts{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;line-height:1.7;color:#4d6683}.scraper-counts strong{color:#244873}
 .scraper-error{padding:12px 14px;border:1px solid #edc9c4;background:#fff3f1;color:#963e34;border-radius:8px;font-size:14px;line-height:1.6;overflow-wrap:anywhere;margin:15px 0 0}
 @media(max-width:500px){#source-scraper-form{padding:13px}#source-scraper-form .password-field{gap:6px}#source-scraper-form .password-toggle{min-width:76px;padding:10px 9px}.scraper-run-actions .button{width:100%}.scraper-last-run dl{grid-template-columns:85px minmax(0,1fr);gap:8px}.scraper-status-heading{align-items:flex-start}}
+@media(max-width:500px){.scraper-schedule-time{grid-template-columns:minmax(0,1fr)}.scraper-schedule-time>.button{width:100%}}
 
 .detail-drawer.workbook-drawer{width:min(1280px,calc(100vw - 40px));left:50vw;top:50vh;top:50dvh}
 .workbook-drawer .workbook-header{background:#102f3a;color:#fff;padding:16px 22px;border-bottom:3px solid #79b9a2}

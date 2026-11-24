@@ -23,7 +23,7 @@ function modalFixture(){
    hasAttribute:key=>attributes.has(key),
    contains:target=>target===result||[...children.values()].includes(target),
    closest:()=>null,
-   matches:selector=>selector==='input,select,textarea'&&name==='password',
+   matches:selector=>selector==='input,select,textarea'&&['password','username','time'].includes(name),
    focus(){writes.push([name,'focus']);document.activeElement=result;},
    replaceWith(){structureWrites.push(name+'.replaceWith');throw Error('Dialog node replaced');},
   };
@@ -34,14 +34,15 @@ function modalFixture(){
  }
  const root=node('overlay'),modal=node('modal'),body=node('body',{scrollTop:233}),form=node('form'),app={set innerHTML(value){this.lastHTML=value;}};
  modal.dataset.scraperSourceId='source-a';form.dataset.sourceId='source-a';
- const username=node('username',{value:'edited-user@example.test',type:'text'}),password=node('password',{value:'unsubmitted-secret',type:'text',selectionStart:4,selectionEnd:12,selectionDirection:'forward'}),submit=node('submit'),toggle=node('toggle'),schedule=node('schedule');
+ const username=node('username',{value:'edited-user@example.test',type:'text'}),password=node('password',{value:'unsubmitted-secret',type:'text',selectionStart:4,selectionEnd:12,selectionDirection:'forward'}),submit=node('submit'),toggle=node('toggle'),schedule=node('schedule'),time=node('time',{value:'06:00',type:'time'}),saveTime=node('save-time');
  form.controls=[username,password,submit,toggle];
  for(const selector of ['[type=submit]','[type="submit"]'])form.children.set(selectorKey(selector),submit);
  form.children.set('[name=username]',username);form.children.set('[name=password]',password);
  const fields=new Map();
- for(const hook of ['status','worker','missing-filter','unavailable','offline','action-error','plan-help','started','finished','processed-label','processed','counts','empty','source-error','filter-summary','filter-link','filter-url']){const field=node(hook);fields.set(hook,field);modal.children.set('[data-scraper-'+hook+']',field);}
+ for(const hook of ['status','worker','missing-filter','unavailable','offline','action-error','plan-help','schedule-error','started','finished','processed-label','processed','counts','empty','source-error','filter-summary','filter-link','filter-url']){const field=node(hook);fields.set(hook,field);modal.children.set('[data-scraper-'+hook+']',field);}
  for(const count of ['created','updated','unchanged']){const field=node('count-'+count);fields.set('count-'+count,field);modal.children.set('[data-scraper-count='+count+']',field);}
  const title=node('title');fields.set('title',title);modal.children.set('#modal-title',title);modal.children.set('#source-scraper-form',form);modal.children.set('.modal-body',body);modal.children.set('[data-scraper-schedule]',schedule);modal.children.set('.modal-header h2',title);
+ modal.children.set('[data-scraper-time]',time);modal.children.set('#scraper-daily-time',time);modal.children.set('[data-action=save-source-scraper-time]',saveTime);
  for(const action of ['test-source-scraper','run-source-scraper','disconnect-source-scraper'])modal.children.set('[data-action='+action+']',node(action));
  root.children.set('.modal',modal);root.children.set('.detail-body',null);root.children.set('#source-scraper-form',form);
  const document={hidden:false,activeElement:password,body:node('document-body'),addEventListener(type,listener){listeners[type]=listener;},querySelector(selector){if(selector==='#app')return app;if(selector==='#overlay-root')return root;if(selector==='.modal')return root.children.get('.modal');if(selector==='#source-scraper-form')return form;return modal.querySelector(selector);}};

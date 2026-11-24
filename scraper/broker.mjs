@@ -5,6 +5,34 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 const token=()=>randomBytes(32).toString('base64url');
 const date=value=>value?new Date(value).toISOString():null;
 const same=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
+const SCHEDULE_ZONE='Europe/Amsterdam',DEFAULT_SCHEDULE_TIME='06:00';
+const validScheduleTime=value=>typeof value==='string'&&value.length===5&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+const scheduleFormatter=new Intl.DateTimeFormat('en-GB',{timeZone:SCHEDULE_ZONE,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+const localParts=instant=>Object.fromEntries(scheduleFormatter.formatToParts(instant).filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
+const localDay=instant=>{const p=localParts(instant);return`${p.year}-${p.month}-${p.day}`;};
+const localTime=instant=>{const p=localParts(instant);return`${p.hour}:${p.minute}`;};
+const nextDay=day=>new Date(Date.parse(day+'T00:00:00.000Z')+DAY).toISOString().slice(0,10);
+const localWall=instant=>{const p=localParts(instant);return Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}.000Z`);};
+function dailyInstants(day,time){
+ const wall=Date.parse(`${day}T${time}:00.000Z`);
+ // Examine both offsets around the date, including both sides of a DST change.
+ const offsets=new Set([-36,-12,12,36].map(hours=>{const sample=wall+hours*3600000;return localWall(sample)-sample;}));
+ const candidates=[...offsets].map(offset=>wall-offset).sort((a,b)=>a-b);
+ const exact=candidates.filter(instant=>localDay(instant)===day&&localTime(instant)===time);
+ if(exact.length)return exact;
+ // A nonexistent spring clock time moves forward by the size of the gap.
+ const shifted=candidates.filter(instant=>localDay(instant)===day&&localWall(instant)>wall).sort((a,b)=>localWall(a)-localWall(b)||a-b);
+ if(shifted.length)return[shifted[0]];
+ throw Error('The daily scraper time could not be resolved.');
+}
+function nextDailyRun(time,after,alreadyScheduledDay){
+ let day=localDay(after);
+ for(let count=0;count<4;count++,day=nextDay(day)){
+  if(day===alreadyScheduledDay)continue;
+  const instant=dailyInstants(day,time).find(value=>value>after);if(instant!==undefined)return instant;
+ }
+ throw Error('The next daily scraper run could not be resolved.');
+}
 
 // The browser never receives the encryption key, password, or worker credential.
 export function createScraperBroker({db,readState,importBatch,transaction,fail,encryptionKey='',workerToken='',now=Date.now}){
@@ -14,7 +42,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
  const available=!!key&&!!workerToken;
  db.exec(`CREATE TABLE IF NOT EXISTS scraper_sources(
   source_id TEXT PRIMARY KEY,username TEXT NOT NULL DEFAULT '',encrypted_login TEXT NOT NULL DEFAULT '',
-  schedule_enabled INTEGER NOT NULL DEFAULT 0,next_run_at INTEGER,test_passed INTEGER NOT NULL DEFAULT 0,
+  schedule_enabled INTEGER NOT NULL DEFAULT 0,next_run_at INTEGER,schedule_time TEXT NOT NULL DEFAULT '',last_schedule_day TEXT,test_passed INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'not_configured',last_started_at INTEGER,last_finished_at INTEGER,
   counts_json TEXT,last_processed INTEGER NOT NULL DEFAULT 0,last_total INTEGER,last_error TEXT);
  CREATE TABLE IF NOT EXISTS scraper_jobs(
@@ -25,8 +53,16 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
   counts_json TEXT NOT NULL,items_count INTEGER NOT NULL,PRIMARY KEY(job_id,batch));
  CREATE TABLE IF NOT EXISTS scraper_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS scraper_jobs_pending ON scraper_jobs(status,queued_at);`);
+ const columns=new Set(db.prepare('PRAGMA table_info(scraper_sources)').all().map(column=>column.name));
+ if(!columns.has('schedule_time'))db.exec("ALTER TABLE scraper_sources ADD COLUMN schedule_time TEXT NOT NULL DEFAULT ''");
+ if(!columns.has('last_schedule_day'))db.exec('ALTER TABLE scraper_sources ADD COLUMN last_schedule_day TEXT');
+ // Preserve every existing first run, deriving only its displayed local clock time.
+ for(const cfg of db.prepare("SELECT source_id,next_run_at FROM scraper_sources WHERE schedule_time='' OR schedule_time IS NULL").all()){
+  db.prepare('UPDATE scraper_sources SET schedule_time=? WHERE source_id=?').run(localTime(Number.isFinite(cfg.next_run_at)?cfg.next_run_at:now()),cfg.source_id);
+ }
  const required=()=>{if(!available)fail(503,'Automatisch ophalen wordt nog voorbereid. Probeer het later opnieuw.');};
  const row=id=>db.prepare('SELECT * FROM scraper_sources WHERE source_id=?').get(id);
+ const configuredTime=cfg=>validScheduleTime(cfg?.schedule_time)?cfg.schedule_time:cfg?localTime(Number.isFinite(cfg.next_run_at)?cfg.next_run_at:now()):DEFAULT_SCHEDULE_TIME;
  function encrypt(sourceId,login){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);cipher.setAAD(Buffer.from(sourceId));const bytes=Buffer.concat([cipher.update(JSON.stringify(login),'utf8'),cipher.final()]);return[iv,cipher.getAuthTag(),bytes].map(v=>v.toString('base64url')).join('.');}
  function decrypt(sourceId,value){try{const[iv,tag,data]=value.split('.').map(v=>Buffer.from(v,'base64url')),cipher=createDecipheriv('aes-256-gcm',key,iv);cipher.setAAD(Buffer.from(sourceId));cipher.setAuthTag(tag);return JSON.parse(Buffer.concat([cipher.update(data),cipher.final()]).toString('utf8'));}catch{fail(409,'De opgeslagen bronaanmelding kan niet worden geopend. Verbind deze bron opnieuw.');}}
  function source(id){const s=readState().sources.find(s=>s.id===id&&!s.deleted);if(!s||s.provider!=='bouwberichten')fail(404,'Deze Bouwberichten-bron bestaat niet.');return s;}
@@ -47,16 +83,19 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
   required();source(id);if(type!=='source.scraper.disconnect'&&!(type==='source.scraper.schedule'&&p.enabled===false))usable(id);
   if(type==='source.scraper.configure'){
    if(typeof p.username!=='string'||p.username.trim().length<3||p.username.trim().length>254||/[\u0000-\u001f]/.test(p.username)||typeof p.password!=='string'||!p.password.length||p.password.length>256)fail(400,'Vul een geldige Bouwberichten-gebruikersnaam en wachtwoord in.');
-   cancel(id);const username=p.username.trim();db.prepare("INSERT INTO scraper_sources(source_id,username,encrypted_login,status) VALUES(?,?,?,'ready') ON CONFLICT(source_id) DO UPDATE SET username=excluded.username,encrypted_login=excluded.encrypted_login,status='ready',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error=NULL").run(id,username,encrypt(id,{username,password:p.password}));
+   cancel(id);const username=p.username.trim();db.prepare("INSERT INTO scraper_sources(source_id,username,encrypted_login,schedule_time,status) VALUES(?,?,?,?,'ready') ON CONFLICT(source_id) DO UPDATE SET username=excluded.username,encrypted_login=excluded.encrypted_login,status='ready',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error=NULL").run(id,username,encrypt(id,{username,password:p.password}),localTime(now()));
    // Keep an existing connector key valid; only create an internal key when none exists.
    db.prepare('INSERT INTO source_import_credentials(source_id,token_hash,enabled,created_at) VALUES(?,?,1,?) ON CONFLICT(source_id) DO UPDATE SET enabled=1').run(id,hash(token()),date(now()));
    queue(id,'test');
   }else if(type==='source.scraper.test')queue(id,'test');
   else if(type==='source.scraper.run'){if(!row(id)?.test_passed)fail(409,'Laat eerst een proef met deze bron slagen.');queue(id,'full');}
   else if(type==='source.scraper.schedule'){
-   if(typeof p.enabled!=='boolean')fail(400,'Geef aan of dagelijks ophalen aan staat.');const cfg=row(id);if(!cfg?.encrypted_login)fail(409,'Verbind eerst je Bouwberichten-account.');if(p.enabled&&!cfg.test_passed)fail(409,'Laat eerst een proef met deze bron slagen.');
+   if(typeof p.enabled!=='boolean')fail(400,'Geef aan of dagelijks ophalen aan staat.');
+   if(p.time!==undefined&&!validScheduleTime(p.time))fail(400,'Kies een geldig dagelijks tijdstip (UU:MM).');
+   const cfg=row(id);if(!cfg?.encrypted_login)fail(409,'Verbind eerst je Bouwberichten-account.');if(p.enabled&&!cfg.test_passed)fail(409,'Laat eerst een proef met deze bron slagen.');
    const credential=db.prepare('SELECT enabled FROM source_import_credentials WHERE source_id=?').get(id);if(p.enabled&&!credential?.enabled)fail(409,'Hervat eerst de import voor deze bron.');
-   db.prepare("UPDATE scraper_sources SET schedule_enabled=?,next_run_at=?,status=CASE WHEN status IN ('queued','running') THEN status ELSE ? END WHERE source_id=?").run(p.enabled?1:0,p.enabled?now()+DAY:null,p.enabled?'active':cfg.test_passed?'test_passed':'ready',id);
+   const time=p.time??configuredTime(cfg);
+   db.prepare("UPDATE scraper_sources SET schedule_enabled=?,next_run_at=?,schedule_time=?,status=CASE WHEN status IN ('queued','running') THEN status ELSE ? END WHERE source_id=?").run(p.enabled?1:0,p.enabled?nextDailyRun(time,now(),cfg.last_schedule_day):null,time,p.enabled?'active':cfg.test_passed?'test_passed':'ready',id);
   }else if(type==='source.scraper.disconnect')invalidate(id,{disconnect:true});
   else fail(400,'Onbekende ophaalactie.');
   return{sourceId:id};
@@ -64,7 +103,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
  function sourceSummary(id){
   const cfg=row(id),job=active(id),seen=Number(db.prepare("SELECT value FROM scraper_meta WHERE key='worker_seen'").get()?.value||0);
   return{available,configured:!!cfg?.encrypted_login,username:cfg?.username||'',status:job?.status||cfg?.status||'not_configured',jobMode:job?.mode||null,
-   scheduleEnabled:!!cfg?.schedule_enabled,nextRunAt:date(cfg?.next_run_at),lastTestPassed:!!cfg?.test_passed,workerOnline:seen>now()-90000,
+   scheduleEnabled:!!cfg?.schedule_enabled,scheduleTime:configuredTime(cfg),scheduleTimeZone:SCHEDULE_ZONE,nextRunAt:date(cfg?.next_run_at),lastTestPassed:!!cfg?.test_passed,workerOnline:seen>now()-90000,
    lastStartedAt:date(cfg?.last_started_at),lastFinishedAt:date(cfg?.last_finished_at),lastCounts:cfg?.counts_json?JSON.parse(cfg.counts_json):null,
    lastProcessed:job?.processed??cfg?.last_processed??0,lastTotal:job?.total??cfg?.last_total??null,lastError:cfg?.last_error||null};
  }
@@ -96,7 +135,9 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
   for(const cfg of db.prepare('SELECT * FROM scraper_sources WHERE schedule_enabled=1 AND next_run_at<=?').all(now())){
    const s=readState().sources.find(s=>s.id===cfg.source_id&&!s.deleted&&s.provider==='bouwberichten'),credential=db.prepare('SELECT enabled FROM source_import_credentials WHERE source_id=?').get(cfg.source_id);
    if(!s||!credential?.enabled||!cfg.test_passed||!cfg.encrypted_login){invalidate(cfg.source_id);continue;}
-   if(!active(cfg.source_id))queue(cfg.source_id,'full');db.prepare('UPDATE scraper_sources SET next_run_at=? WHERE source_id=?').run(now()+DAY,cfg.source_id);
+   const today=localDay(now());
+   if(cfg.last_schedule_day!==today&&!active(cfg.source_id))queue(cfg.source_id,'full');
+   db.prepare('UPDATE scraper_sources SET next_run_at=?,last_schedule_day=? WHERE source_id=?').run(nextDailyRun(configuredTime(cfg),now(),today),today,cfg.source_id);
   }
   if(leadWorkbook===true)queueWorkbookRefreshes();
   const job=db.prepare("SELECT * FROM scraper_jobs WHERE status='queued' ORDER BY queued_at,rowid LIMIT 1").get();if(!job)return{job:null};

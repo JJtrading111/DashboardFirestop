@@ -221,12 +221,18 @@ function sourceManualRunButton(s){
  const attributes='data-id="'+esc(s.id)+'" aria-label="Nu ophalen: '+esc(s.name)+'"';
  return btn('Nu ophalen','run-source-scraper','primary',attributes+(reason?' disabled title="'+esc(reason)+'"':''));
 }
+const validScraperTime=value=>typeof value==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+function scraperScheduleTime(scraper){
+ if(validScraperTime(scraper.scheduleTime))return scraper.scheduleTime;
+ if(scraper.nextRunAt&&Number.isFinite(Date.parse(scraper.nextRunAt)))return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(scraper.nextRunAt));
+ return '06:00';
+}
 function sourceScraperHTML(s,m){
  const scraper=s.scraper||{},status=sourceScraperStatus(s),filter=!!sourceFilterURL(s),working=['queued','running'].includes(scraper.status),busy=!!m.scraperBusy,available=!!scraper.available,disabled=!available||!filter||busy||working;
  let body='<div class="scraper-status-heading"><span class="badge '+status.tone+'" data-scraper-status>'+status.label+'</span><span class="scraper-worker" data-scraper-worker hidden></span></div>'+sourceFilterHTML(s,true);
  body+='<div class="info-box" data-scraper-missing-filter '+(filter?'hidden':'')+'><strong>Stel eerst je Bouwfilter in</strong><p>Deze bron heeft een filterlink met de gekozen criteria nodig voordat je projecten kunt ophalen.</p>'+btn('Bron configureren','source-config','secondary','data-id="'+esc(s.id)+'"')+'</div><div class="info-box" data-scraper-unavailable '+(available?'hidden':'')+'><strong>Automatisch ophalen wordt klaargezet</strong><p>De beveiligde scraper is voor deze werkplek nog niet beschikbaar. Je bronfilter en bestaande leads blijven bewaard.</p></div><p class="scraper-help" data-scraper-offline hidden>De scraper is nog niet online. Een ingeplande proef kan pas starten wanneer hij online is.</p>';
  body+='<form id="source-scraper-form" data-source-id="'+esc(s.id)+'"><input type="hidden" name="id" value="'+esc(s.id)+'"><h3>Beveiligde bronlogin</h3><p class="scraper-help">Gebruik je account van Bouwberichten. De bronlogin wordt versleuteld bij de scraper opgeslagen en komt niet in GitHub. Je wachtwoord wordt hier nooit teruggetoond.</p><label class="field" for="scraper-username"><span>E-mailadres of gebruikersnaam</span></label><input id="scraper-username" name="username" type="text" required maxlength="254" autocomplete="username" value="'+esc(scraper.username||s.username||'')+'" '+(disabled?'disabled':'')+'><div class="field scraper-password"><label for="scraper-password">Wachtwoord van Bouwberichten</label><div class="password-field"><input id="scraper-password" name="password" type="password" required maxlength="256" autocomplete="current-password" '+(disabled?'disabled':'')+'><button type="button" class="button ghost password-toggle" data-action="toggle-password" aria-controls="scraper-password" aria-pressed="false" aria-label="Wachtwoord van Bouwberichten tonen" '+(disabled?'disabled':'')+'>Tonen</button></div></div><p class="scraper-error" data-scraper-action-error role="alert" hidden></p><button type="submit" class="button primary scraper-connect" '+(disabled?'disabled':'')+'>Beveiligd verbinden en proef starten</button></form>';
- body+='<section class="scraper-run-panel"><h3>Projecten ophalen</h3><p class="scraper-help">Na een geslaagde proef kun je de volledige filterselectie direct ophalen, ook als dagelijks ophalen aanstaat.</p><div class="scraper-run-actions">'+btn('Proef met 5 projecten','test-source-scraper','secondary','data-id="'+esc(s.id)+'" disabled')+btn('Volledige selectie nu ophalen','run-source-scraper','primary','data-id="'+esc(s.id)+'" disabled')+'</div><label class="scraper-schedule"><input type="checkbox" data-scraper-schedule="'+esc(s.id)+'" disabled><span><strong>Dagelijks ophalen</strong><small data-scraper-plan-help></small></span></label></section>';
+ body+='<section class="scraper-run-panel"><h3>Projecten ophalen</h3><p class="scraper-help">Na een geslaagde proef kun je de volledige filterselectie direct ophalen, ook als dagelijks ophalen aanstaat.</p><div class="scraper-run-actions">'+btn('Proef met 5 projecten','test-source-scraper','secondary','data-id="'+esc(s.id)+'" disabled')+btn('Volledige selectie nu ophalen','run-source-scraper','primary','data-id="'+esc(s.id)+'" disabled')+'</div><label class="scraper-schedule"><input type="checkbox" data-scraper-schedule="'+esc(s.id)+'" disabled><span><strong>Dagelijks ophalen</strong><small data-scraper-plan-help></small></span></label><div class="scraper-schedule-time"><label class="field" for="scraper-daily-time"><span>Tijdstip (Nederlandse tijd)</span><input id="scraper-daily-time" type="time" step="60" required value="'+esc(m.scheduleTimeDraft??scraperScheduleTime(scraper))+'" data-scraper-time="'+esc(s.id)+'" aria-describedby="scraper-time-help" disabled></label><button type="button" class="button secondary" data-action="save-source-scraper-time" data-id="'+esc(s.id)+'" disabled>Tijd opslaan</button></div><p id="scraper-time-help" class="scraper-help">Dit tijdstip geldt voor deze bron. Zomer- en wintertijd worden automatisch gevolgd.</p><p class="scraper-error" data-scraper-schedule-error role="alert" hidden></p></section>';
  body+='<section class="scraper-run-panel scraper-last-run"><h3>Laatste ophaalronde</h3><dl><dt>Gestart</dt><dd data-scraper-started>—</dd><dt>Afgerond</dt><dd data-scraper-finished>—</dd><dt data-scraper-processed-label hidden>Verwerkt</dt><dd data-scraper-processed hidden></dd></dl><div class="scraper-counts" data-scraper-counts hidden><span><strong data-scraper-count="created">0</strong> nieuw</span><span><strong data-scraper-count="updated">0</strong> bijgewerkt</span><span><strong data-scraper-count="unchanged">0</strong> ongewijzigd</span></div><p class="scraper-help" data-scraper-empty>Er is nog geen ophaalronde afgerond.</p><p class="scraper-error" data-scraper-source-error role="status" hidden></p></section>';
  return modalShell('Automatisch ophalen · '+esc(s.name),body,'<div class="source-import-footer">'+btn('Bronlogin verwijderen','disconnect-source-scraper','danger','data-id="'+esc(s.id)+'" hidden')+btn('Sluiten','close-modal')+'</div>',false,'data-scraper-source-id="'+esc(s.id)+'"');
 }
@@ -248,11 +254,36 @@ function updateScraperModal(modal,s,m){
  text('[data-scraper-action-error]',m.scraperError||'');hidden('[data-scraper-action-error]',!m.scraperError);
  disable('[data-action="test-source-scraper"]',disabled||!scraper.configured);disable('[data-action="run-source-scraper"]',busy||!!manualScrapeBlock(s));
  const planning=modal.querySelector('[data-scraper-schedule]');if(planning&&!busy&&planning.checked!==!!scraper.scheduleEnabled)planning.checked=!!scraper.scheduleEnabled;disable('[data-scraper-schedule]',!available||!filter||busy||!scraper.lastTestPassed);
- const scheduleHelp=scraper.scheduleEnabled?(scraper.nextRunAt?'Volgende keer: '+fmt(scraper.nextRunAt):'Dagelijkse planning staat aan.'):(scraper.lastTestPassed?'Na aanzetten haalt deze bron iedere 24 uur projecten op.':'Een geslaagde proef is nodig om de planning aan te zetten.');text('[data-scraper-plan-help]',scheduleHelp);
+ const timeInput=modal.querySelector('[data-scraper-time]'),savedTime=scraperScheduleTime(scraper);
+ if(timeInput&&!m.scheduleTimeDirty&&document.activeElement!==timeInput&&timeInput.value!==savedTime)timeInput.value=savedTime;
+ disable('[data-scraper-time]',!available||!filter||!scraper.configured||busy);disable('[data-action="save-source-scraper-time"]',!available||!filter||!scraper.configured||busy||!m.scheduleTimeDirty);
+ text('[data-action="save-source-scraper-time"]',m.scheduleSaving?'Opslaan…':'Tijd opslaan');text('[data-scraper-schedule-error]',m.scheduleTimeError||'');hidden('[data-scraper-schedule-error]',!m.scheduleTimeError);
+ const scheduleHelp=scraper.scheduleEnabled?(scraper.nextRunAt?'Volgende keer: '+fmt(scraper.nextRunAt)+' · Nederlandse tijd':'Dagelijks om '+savedTime+' · Nederlandse tijd'):(scraper.lastTestPassed?'Na aanzetten haalt deze bron dagelijks op het gekozen tijdstip projecten op.':'Een geslaagde proef is nodig om de planning aan te zetten.');text('[data-scraper-plan-help]',scheduleHelp);
  text('[data-scraper-started]',fmt(scraper.lastStartedAt));text('[data-scraper-finished]',fmt(scraper.lastFinishedAt));const processed=scraper.lastProcessed!=null;hidden('[data-scraper-processed-label]',!processed);hidden('[data-scraper-processed]',!processed);text('[data-scraper-processed]',processed?Number(scraper.lastProcessed)+(scraper.lastTotal!=null?' van '+Number(scraper.lastTotal):'')+' projecten':'');
  hidden('[data-scraper-counts]',!scraper.lastCounts);hidden('[data-scraper-empty]',!!scraper.lastCounts);for(const key of ['created','updated','unchanged'])text('[data-scraper-count="'+key+'"]',Number(scraper.lastCounts?.[key]||0));
  text('[data-scraper-source-error]',scraper.lastError||'');hidden('[data-scraper-source-error]',!scraper.lastError);hidden('[data-action="disconnect-source-scraper"]',!scraper.configured);disable('[data-action="disconnect-source-scraper"]',busy);
  const ariaBusy=String(busy);if(modal.getAttribute('aria-busy')!==ariaBusy)modal.setAttribute('aria-busy',ariaBusy);
+}
+
+function editScraperScheduleTime(input){
+ const modal=ui.modal;if(!state||modal?.type!=='source-scraper'||input.dataset.scraperTime!==modal.id||modal.scraperBusy)return;
+ modal.scheduleTimeDraft=input.value;modal.scheduleTimeDirty=true;modal.scheduleTimeError='';
+ const source=leadSources().find(source=>source.id===modal.id);if(source)updateScraperModal($('.modal'),source,modal);
+}
+async function saveScraperSchedule(id,enabled,{timeOnly=false}={}){
+ if(!state||!isChief())return;
+ const modal=ui.modal,source=leadSources().find(source=>source.id===id&&sourceProvider(source)==='bouwberichten');
+ if(!source||modal?.type!=='source-scraper'||modal.id!==id||modal.scraperBusy)return;
+ const time=$('[data-scraper-time]')?.value??modal.scheduleTimeDraft??scraperScheduleTime(source.scraper||{});
+ modal.scheduleTimeDraft=time;
+ if((enabled||timeOnly)&&!validScraperTime(time)){modal.scheduleTimeDirty=true;modal.scheduleTimeError='Kies een geldig tijdstip (uu:mm).';updateScraperModal($('.modal'),source,modal);return;}
+ modal.scraperBusy=true;modal.scheduleSaving=true;modal.scheduleTimeError='';updateScraperModal($('.modal'),source,modal);
+ try{
+  await mutate('source.scraper.schedule',{id,enabled,...(validScraperTime(time)?{time}:{})});
+  if(validScraperTime(time)){const updated=leadSources().find(source=>source.id===id);modal.scheduleTimeDraft=scraperScheduleTime(updated?.scraper||{});modal.scheduleTimeDirty=false;}
+  toast(timeOnly?'Tijdstip opgeslagen.':enabled?'Dagelijks ophalen staat aan.':'Dagelijks ophalen staat uit.');
+ }catch(error){modal.scheduleTimeError=error.message||'Het tijdstip kon niet worden opgeslagen. Probeer het opnieuw.';if(state&&ui.modal!==modal)toast(modal.scheduleTimeError,'amber');}
+ finally{modal.scraperBusy=false;modal.scheduleSaving=false;if(state&&ui.modal===modal)renderOverlay();}
 }
 
 async function scraperAction(type,id,payload={}){
@@ -624,6 +655,7 @@ document.addEventListener('click',async e=>{
     if(['columns','invite'].includes(a)&&!canManage())throw Error('Je hebt geen beheerrol.');openModal(a,id);break;
    case'source-scraper':{if(!isChief())throw Error('Alleen de hoofdbeheerder kan automatisch ophalen instellen.');if(!leadSources().some(s=>s.id===id&&sourceProvider(s)==='bouwberichten'))throw Error('Automatisch ophalen is alleen beschikbaar voor Bouwberichten-bronnen.');openModal('source-scraper',id);break;}
    case'test-source-scraper':await scraperAction('source.scraper.test',id);toast('Proef met 5 projecten ingepland.');break;
+   case'save-source-scraper-time':{const source=leadSources().find(source=>source.id===id);await saveScraperSchedule(id,!!source?.scraper?.scheduleEnabled,{timeOnly:true});break;}
    case'run-source-scraper':{
     const source=leadSources().find(s=>s.id===id&&sourceProvider(s)==='bouwberichten');
     if(!isChief()||!source)throw Error('Deze bron kan niet handmatig worden opgehaald.');
@@ -692,7 +724,8 @@ document.addEventListener('change',async e=>{
  const el=e.target;if(!state)return;
  if(el.dataset.field==='query')return;
  if(el.hasAttribute('data-account-role')){updateAccountCompanyField(el);return;}
- if(el.hasAttribute('data-scraper-schedule')){try{await scraperAction('source.scraper.schedule',el.dataset.scraperSchedule,{enabled:el.checked});toast(el.checked?'Dagelijks ophalen staat aan.':'Dagelijks ophalen staat uit.');}catch(error){if(state){render();toast(error.message,'amber');}}return;}
+ if(el.hasAttribute('data-scraper-schedule')){await saveScraperSchedule(el.dataset.scraperSchedule,el.checked);return;}
+ if(el.hasAttribute('data-scraper-time')){editScraperScheduleTime(el);return;}
  if(el.hasAttribute('data-source-provider')){const form=el.closest('form'),bouw=el.value==='bouwberichten',fields=form.querySelector('[data-bouw-filter-fields]'),filter=form.querySelector('[name="filterUrl"]'),name=form.querySelector('[name="name"]'),url=form.querySelector('[name="url"]');fields.hidden=!bouw;filter.disabled=!bouw;name.placeholder=bouw?'Bouwberichten – Gegund vanaf 01-01-2026':'Bijv. Woningcorporaties';if(bouw&&!url.value.trim())url.value='https://portal.bouwberichten.nl/projecten';return;}
  if(el.hasAttribute('data-duration-unit')){changeCooldownUnit(el);return;}
 
@@ -715,7 +748,7 @@ function updateLeadSearch(e){
  ui.query=input.value;clearTimeout(searchTimer);if(e.isComposing)return;
  searchTimer=setTimeout(()=>{if(input.isConnected&&input===$('#lead-search')&&!ui.modal&&!ui.drawer)renderLeadSearchResults();},180);
 }
-document.addEventListener('input',e=>{updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
+document.addEventListener('input',e=>{updateLeadSearch(e);if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
 document.addEventListener('compositionend',updateLeadSearch);
 document.addEventListener('submit',async e=>{
  e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));
