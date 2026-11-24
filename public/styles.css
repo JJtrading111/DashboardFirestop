@@ -262,3 +262,4 @@
 .project-date-arrows button{display:inline-grid;place-items:center;box-sizing:border-box;min-width:22px;min-height:24px;padding:0 4px;border:1px solid #d5e2ec;border-radius:4px;background:#fff;color:#405d7b;font-size:14px;line-height:1;cursor:pointer}
 .project-date-arrows button:hover{background:#eef4fa}
 .project-date-arrows button[aria-pressed=true]{border-color:#2759a6;background:#e3edfb;color:#1748a4}
+.main.main-full-width{max-width:none;margin-inline:0}

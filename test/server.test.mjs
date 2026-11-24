@@ -340,6 +340,35 @@ test('production cookies are Secure and invalid origins cannot activate a link',
   assert.match(result.headers.get('set-cookie'), /HttpOnly/i);
 });
 
+test('a head administrator without a company can open all workspaces and manage account links', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner=env.client(), head=env.client(), seller=env.client();
+  accepted(await owner.activate(env.bootstrapToken));
+  const makeInvite=(name,email,role,companyId)=>owner.action('invitation.create','c-noord',{name,email,role,companyId});
+  assert.equal((await makeInvite('Zonder bedrijf','no-company-seller@example.test','verkoper',null)).status,400);
+  const invitation=accepted(await makeInvite('Bedrijfsoverstijgend','global-head@example.test','hoofdbeheerder',null)).result;
+  assert.equal(invitation.invitation.companyId,null);assert.equal(invitation.invitation.companyName,'Alle bedrijven');
+  assert.equal(accepted(await head.activate(invitation.token)).user.companyId,null);
+  const defaultState=accepted(await head.request('/api/state'));
+  assert.equal(defaultState.companyId,'c-noord');
+  assert.ok(defaultState.state.companies.some(company=>company.id==='c-delta'));
+  accepted(await head.action('note.add','c-delta',{leadId:'l-01',text:'Opvolging voor Delta'}));
+  const delta=accepted(await head.state('c-delta'));
+  assert.equal(delta.state.workspaces['c-delta']['l-01'].notes.at(-1).text,'Opvolging voor Delta');
+  const localInvite=accepted(await makeInvite('Lokale verkoper','local-seller@example.test','verkoper','c-noord')).result;
+  accepted(await seller.activate(localInvite.token));
+  assert.equal((await seller.state('c-delta')).status,403);
+  const local=accepted(await seller.state());
+  assert.equal(local.state.workspaces['c-delta'],undefined);
+  assert.equal(local.state.users.some(user=>user.id===head.user.id),false);
+  assert.equal((await head.action('user.update','c-delta',{userId:head.user.id,role:'verkoper',companyId:null})).status,400);
+  accepted(await head.action('user.update','c-delta',{userId:head.user.id,role:'hoofdbeheerder',companyId:'c-delta'}));
+  accepted(await head.action('user.update','c-delta',{userId:head.user.id,role:'hoofdbeheerder',companyId:null}));
+  assert.equal(accepted(await head.request('/api/session')).user.companyId,null);
+  assert.equal(accepted(await head.state('c-delta')).state.workspaces['c-delta']['l-01'].notes.at(-1).text,'Opvolging voor Delta');
+});
+
 test('changing your own role keeps a head administrator and immediately invalidates the old session', async t => {
   const env = await fixture();
   t.after(() => env.close());
