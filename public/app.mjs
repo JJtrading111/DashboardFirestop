@@ -487,7 +487,7 @@ function workbookContactHTML(l,w,e){
   </div>
   ${canCall||pending?btn(pending?'Beluitkomst vastleggen':'Gesprek registreren','call-outcome','secondary workbook-register',`data-id="${esc(l.id)}" ${pending?`data-call-id="${esc(pending.id)}"`:''}`):''}
   ${Array.isArray(d.parties)&&d.parties.length?`<details class="workbook-details"><summary>Overige betrokken partijen (${d.parties.length})</summary>
-    ${d.parties.map(p=>`<div class="workbook-party"><small>${esc(p.role)}</small><strong>${esc(p.name)}</strong><div>${esc(p.phone)} ${p.email?`<a href="mailto:${esc(p.email)}">E-mail</a>`:''}${safeLeadLink(p.website)?` <a href="${esc(safeLeadLink(p.website))}" target="_blank" rel="noopener noreferrer">Website</a>`:''}</div></div>`).join('')}</details>`:''}
+    ${d.parties.map(p=>{const number=leadPhone(p);return `<div class="workbook-party"><small>${esc(p.role)}</small><strong>${esc(p.name)}</strong><div>${number&&e.allowed?`<a href="tel:${esc(number)}" data-action="call-link" data-id="${esc(l.id)}" aria-label="Bel ${esc(p.name)} op ${esc(p.phone)}">${esc(p.phone)}</a>`:`<span${number?' title="Tijdelijk niet belbaar door de belwachttijd"':''}>${esc(p.phone)}</span>`} ${p.email?`<a href="mailto:${esc(p.email)}">E-mail</a>`:''}${safeLeadLink(p.website)?` <a href="${esc(safeLeadLink(p.website))}" target="_blank" rel="noopener noreferrer">Website</a>`:''}</div></div>`;}).join('')}</details>`:''}
  </section>`;
 }
 
@@ -667,7 +667,9 @@ document.addEventListener('click',async e=>{
    case'go-settings':navTo('settings');break;
    case'complete-callback':await mutate('callback.complete',{leadId:target.dataset.leadId,callbackId:id});render();toast('Terugbelafspraak afgehandeld.');break;
    case'register-call':case'call-link':{
-    const lead=state.leads.find(l=>l.id===id);if(!lead||!leadPhone(lead))throw Error('Er is geen telefoonnummer beschikbaar voor deze lead.');const phone=target.getAttribute('href');target.setAttribute('aria-busy','true');await mutate('call.record',{leadId:id});render();toast('Belmoment geregistreerd.');if(a==='call-link'&&phone?.startsWith('tel:'))location.href=phone;break;
+    const lead=state.leads.find(l=>l.id===id),phone=target.getAttribute('href'),numbers=lead?[lead,...(Array.isArray(lead.projectDetails?.parties)?lead.projectDetails.parties:[])].map(leadPhone).filter(Boolean):[];
+    if(!numbers.length||a==='call-link'&&!numbers.some(number=>phone==='tel:'+number))throw Error('Er is geen geldig telefoonnummer beschikbaar voor deze lead.');
+    if(target.getAttribute('aria-busy')==='true')return;target.setAttribute('aria-busy','true');await mutate('call.record',{leadId:id});render();toast('Belmoment geregistreerd.');if(a==='call-link')location.href=phone;break;
    }
    case'dismiss-toast':transient=transient.filter(t=>t.id!==id);renderToasts();break;
    case'dismiss-callback':ui.dismissed.push(currentUser().id+':'+id);save();renderToasts();break;

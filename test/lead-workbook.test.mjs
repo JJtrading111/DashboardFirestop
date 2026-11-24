@@ -119,11 +119,12 @@ test('the upgraded worker refreshes a previously completed test selection once',
 });
 
 test('shared lead opening renders the workbook and both flags directly below the note action',async()=>{
+ const listeners=new Map();
  const source=(await readFile(new URL('../public/app.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/,'').replace(/^initialize\(\);\r?$/m,'');
  const lead={...item(),id:'lead-workbook',source:'bouw',tags:[]};
  const seller={id:'seller',name:'Verkoper',companyId:'company',role:'verkoper',status:'actief'};
  const initialState={users:[seller],companies:[{id:'company',name:'Bedrijf',columns:[{id:'nieuw',name:'Nieuw'}]}],leads:[lead],workspaces:{},settings:{},callLog:[],sources:[{id:'bouw',name:'Bouwberichten'}]};
- const context=vm.createContext({...model,URL,URLSearchParams,initialState,document:{addEventListener(){}},window:{addEventListener(){}},
+ const context=vm.createContext({...model,URL,URLSearchParams,initialState,document:{addEventListener:(type,listener)=>listeners.set(type,listener)},window:{addEventListener(){}},
   location:{hash:'#kanban'},localStorage:{getItem:()=>null},setInterval:()=>0});
  vm.runInContext(source,context);
  const html=vm.runInContext("state=initialState;ui.drawer='lead-workbook';ui.companyId='company';ui.userId='seller';drawerHTML();",context);
@@ -163,4 +164,21 @@ test('shared lead opening renders the workbook and both flags directly below the
  }
  const exported=vm.runInContext('let exported;csv=(_filename,rows)=>{exported=rows;};exportLeads();exported;',context);
  assert.equal(exported[0][4],'Oplevering');assert.equal(exported[1][4],'2028-01-15');
+ // A party's phone remains callable when no primary phone is available. It must
+ // still register the central lead's call before handing its number to the dialer.
+ context.partyOnlyLead={...lead,phone:''};const effects=[];
+ context.recordEffect=(...args)=>effects.push(args);
+ vm.runInContext("state.leads=[partyOnlyLead];mutate=async(type,payload)=>{recordEffect(type,payload.leadId);};render=()=>{};toast=()=>{};",context);
+ const contact=vm.runInContext("workbookContactHTML(partyOnlyLead,work(partyOnlyLead),{allowed:true})",context);
+ assert.match(contact,/href="tel:0301111111"[^>]*data-action="call-link"/);
+ const blocked=vm.runInContext("workbookContactHTML(partyOnlyLead,work(partyOnlyLead),{allowed:false,reason:'cooldown'})",context);
+ assert.doesNotMatch(blocked,/href="tel:/);
+ Object.defineProperty(context.location,'href',{set:value=>effects.push(['dial',value]),configurable:true});
+ const attributes=new Map([['href','tel:0301111111']]);
+ const target={dataset:{action:'call-link',id:lead.id},isConnected:true,matches:()=>false,closest:selector=>selector==='[data-action],[data-route]'?target:null,getAttribute:name=>attributes.get(name),setAttribute:(name,value)=>attributes.set(name,value),removeAttribute:name=>attributes.delete(name)};
+ await listeners.get('click')({target,preventDefault(){}});
+ assert.deepEqual(effects,[['call.record',lead.id],['dial','tel:0301111111']]);
+ effects.length=0;attributes.delete('aria-busy');context.recordEffect=()=>{throw Error('Belwachttijd');};
+ await listeners.get('click')({target,preventDefault(){}});
+ assert.deepEqual(effects,[],'A failed call registration must not open a dialer and bypass the lead cooldown');
 });

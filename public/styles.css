@@ -233,6 +233,7 @@
 .workbook-party{padding:8px 0;border-bottom:1px solid #d4e1df;font-size:13px}
 .workbook-party small,.workbook-party strong{display:block}
 .workbook-party a{margin-left:5px}
+.workbook-party a:first-child{margin-left:0}
 .workbook-followup .form-grid{gap:8px 10px}
 .workbook-next{margin-top:12px;padding:8px 10px;background:#fff;border:1px solid #d4e1df;border-left:3px solid #6ba493;border-radius:7px}
 .workbook-next h4,.workbook-activity h4{margin:0;font-size:14px}
