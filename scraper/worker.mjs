@@ -1,7 +1,7 @@
 import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
 import {createBouwberichtenApi,mapProjectToLead} from './bouwberichten-api.mjs';
-import {loginBouwberichten} from './bouwberichten-auth.mjs';
+import {loginBouwberichten,sanitizeAuthDiagnostic} from './bouwberichten-auth.mjs';
 
 export class WorkerError extends Error{
  constructor(code='scrape_error',status=null){super('Het ophalen is onderbroken.');this.name='WorkerError';this.code=code;this.status=status;}
@@ -89,14 +89,14 @@ export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,
   }
   if(!processed)throw new WorkerError('source_error');
   await broker.finish(job,{processed,total});return{processed,total};
- }catch(error){const code=classify(error);await broker.fail(job,code).catch(()=>{});return{failed:true,code};}
+ }catch(error){const code=classify(error),diagnostic=code==='login_required'?sanitizeAuthDiagnostic(error?.diagnostic):undefined;await broker.fail(job,code).catch(()=>{});return{failed:true,code,...diagnostic&&{diagnostic}};}
  finally{await session?.close().catch(()=>{});}
 }
 
 export async function runWorker({config=loadWorkerConfig(),signal,fetchImpl=fetch,sleepImpl=delay,run=runJob,logger=console}={}){
  const broker=createBrokerClient({...config,signal,fetchImpl,sleepImpl});logger.info('Scrapingworker gestart.');
  while(!signal?.aborted){
-  try{const job=await broker.claim();if(job){const result=await run(job,{broker,signal,sleepImpl});logger.info(JSON.stringify({event:result.failed?'job_failed':'job_finished',...result.failed?{code:result.code}:{processed:result.processed,total:result.total}}));continue;}}
+  try{const job=await broker.claim();if(job){const result=await run(job,{broker,signal,sleepImpl}),diagnostic=result.failed?sanitizeAuthDiagnostic(result.diagnostic):undefined;logger.info(JSON.stringify({event:result.failed?'job_failed':'job_finished',...result.failed?{code:['login_required','source_error','scrape_error'].includes(result.code)?result.code:'scrape_error',...diagnostic&&{diagnostic}}:{processed:result.processed,total:result.total}}));continue;}}
   catch(error){if(signal?.aborted)break;logger.error(JSON.stringify({event:'broker_unavailable',status:error?.status??null}));}
   try{await wait(15000,signal,sleepImpl);}catch{break;}
  }
