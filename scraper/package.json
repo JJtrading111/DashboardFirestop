@@ -1,0 +1,9 @@
+{
+  "name": "bouwberichten-scrapingworker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24 <25"},
+  "scripts": {"start": "node worker.mjs"},
+  "dependencies": {"playwright": "1.65.1"}
+}

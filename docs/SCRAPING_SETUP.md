@@ -2,7 +2,23 @@
 
 De skill `web-scraping` staat met alle upstream workflows, voorbeelden en MIT-licentie onder `.agents/skills/web-scraping`. `UPSTREAM.json` legt de oorspronkelijke versie vast. De aangepaste ingang gebruikt de beschikbare hulpmiddelen in deze omgeving; de upstream Proxy-MCP-tools worden niet door deze installatie toegevoegd.
 
-De beveiligde import en afzonderlijke filterbronnen zijn gereed. Het aangemelde portaal is bekeken: de aangeleverde filterlink selecteert **Gegund vanaf 01-01-2026** en toonde op 24 november 2026 1.094 resultaten. De login is noodzakelijk. Een automatische extractie, de data-API en een blijvende bronsessie zijn nog niet gevalideerd. Er is nog geen Apify Actor gepubliceerd, planning ingeschakeld of echte brondata geïmporteerd.
+De beveiligde import, afzonderlijke filterbronnen en een aparte Railway-scraper zijn geïmplementeerd. Het aangemelde portaal is bekeken: de aangeleverde filterlink selecteert **Gegund vanaf 01-01-2026** en toonde op 24 november 2026 1.094 resultaten. De login is noodzakelijk. De API-mapping is gecontroleerd aan de publieke portalcode. Een echte aanmelding en extractie gelden pas als gevalideerd wanneer de proef in het dashboard is geslaagd; unit- en integratietests gebruiken fictieve records.
+
+## Automatisch ophalen activeren
+
+1. Open als hoofdbeheerder de gewenste Bouwberichten-filterbron en kies **Automatisch ophalen**. Sla eerst de volledige filterlink op als die nog ontbreekt.
+2. Vul daar de Bouwberichten-gebruikersnaam en het bronwachtwoord in. **Beveiligd verbinden en proef starten** slaat de aanmelding versleuteld op en plant één proef met maximaal vijf echte projecten. Het formulier vraagt om de bronlogin, niet de dashboardlogin. De browser maakt het wachtwoordveld direct leeg na verzending.
+3. De aparte scraperdienst pakt de opdracht op. Controleer de status en de vijf geïmporteerde projecten, inclusief beschikbare contactgegevens. Bij een extra aanmeldcontrole, CAPTCHA, verlopen toegang of onbekende bronstructuur stopt de opdracht met een melding. Er wordt geen beveiligingscontrole omzeild.
+4. Na een geslaagde proef wordt **Volledig ophalen** beschikbaar. Een volledige selectie is maximaal 5000 projecten; bij een grotere selectie stopt de opdracht en moet het filter kleiner worden gemaakt. Een gedeeltelijke selectie wordt niet als volledige import gepresenteerd.
+5. Schakel **Dagelijks ophalen** in om deze selectie iedere 24 uur te laten verwerken. De eerste geplande uitvoering is 24 uur na inschakelen. Voor direct ophalen gebruik je de volledige import. Elke filterbron heeft een eigen planning en status.
+
+**Import pauzeren**, de importtoegang intrekken, de bron verwijderen of het filter wijzigen annuleert lopende opdrachten en schakelt de planning uit. Het wijzigen van filters vereist een nieuwe proef. **Bronaanmelding verwijderen** wist de opgeslagen bronlogin en stopt de planning, met behoud van leads en opvolging. Een mislukte scrape verwijdert geen bestaande projecten.
+
+De scraper draait los van de webservice. Het dashboard bewaart de bronlogin met AES-256-GCM in SQLite; de sleutel staat alleen in Railway Variables als `SCRAPER_ENCRYPTION_KEY` (32 willekeurige bytes, base64url). `SCRAPER_WORKER_TOKEN` is een aparte willekeurige machinesleutel van minimaal 43 URL-veilige tekens, ingesteld op beide diensten. Sleutels en bronwachtwoorden staan nooit in GitHub. Hoofdbeheerders zien alleen de gebruikersnaam en verbindingsstatus; de opgeslagen wachtwoorden worden niet teruggegeven. Andere rollen krijgen geen scraperconfiguratie.
+
+De worker heeft `DASHBOARD_URL` (de publieke HTTPS-origin) en `SCRAPER_WORKER_TOKEN` nodig. Stel in Railway rechtstreeks Dockerfile `scraper/Dockerfile`, startopdracht `node worker.mjs`, één replica en herstart bij fouten in. De buildcontext blijft de repository-root. De oude Config-as-Code-koppeling is voor beide diensten leeg; `railway.json` is geen actief configuratiebestand meer. De Playwright-versie staat vast in `scraper/package-lock.json`. Er is geen openbaar workeradres of gedeeld databasevolume nodig. De worker vraagt elke 15 seconden om een opdracht, gebruikt een tijdelijke browsercontext voor bronlogin en houdt toegangstokens uitsluitend in het geheugen. Bronverzoeken worden na elkaar uitgevoerd met minstens één seconde tussenruimte. Een opdracht stopt na maximaal een uur.
+
+De machine-opdrachten lopen via `/api/scraper/claim` en de brongebonden, tijdelijk geleasede `/api/scraper/jobs/:id/{progress,batch,finish,fail}`. Batches worden server-side via dezelfde gevalideerde importlogica verwerkt als onderstaande losse import-API. Een bestaande importsleutel blijft geldig; bij de eerste scraperconfiguratie zonder importsleutel wordt interne importtoegang aangemaakt. Een machinesleutel geeft geen browserlogin, gebruikersbeheer of toegang tot bedrijfsnotities.
 
 ## Meerdere filters als bronnen
 
@@ -20,12 +36,12 @@ Iedere filterbron heeft een eigen importadres, token, pauzestand en importgeschi
 
 Gebruik voor hetzelfde Bouwberichten-project in elk filter hetzelfde `externalId`. De import koppelt dat project dan aan meerdere bronnen, met één centrale lead en één gedeelde belwachttijd. Bedrijfsopvolging en oorspronkelijke aanmaakdatum blijven behouden. Het brontotaal kan door overlap hoger zijn dan het unieke totaal; een rapport met een gekozen bron rekent alleen de projecten uit die bron mee. Andere brontypen behouden een eigen identiteit per bron. Bestaande dubbele leads worden niet automatisch samengevoegd.
 
-## Een bron aansluiten
+## Een eigen externe scraper aansluiten
 
 1. Log in als hoofdbeheerder en open **Bronnen & koppelingen → de gewenste filterbron → Import instellen**. Controleer de bronnaam en filtersamenvatting.
 2. Kies **Importtoken maken**. Kopieer het getoonde importadres en token. Het token is alleen nu zichtbaar; de database bewaart alleen de hash.
 3. Bewaar bij de scraper twee geheime omgevingsvariabelen: `BOUWBERICHTEN_IMPORT_URL` en `BOUWBERICHTEN_IMPORT_TOKEN`. Dit kan later bij de Apify-job of een aparte scraper-service. Het dashboard heeft hiervoor geen nieuwe globale Railway-variabele nodig.
-4. Bewaar een eventuele Bouwberichten-login afzonderlijk in de geheimen van de scraper. Het importtoken is uitsluitend voor het dashboard, niet voor inloggen op Bouwberichten.nl.
+4. Bewaar een eventuele Bouwberichten-login afzonderlijk in de geheimen van de externe scraper. De meegeleverde Railway-scraper gebruikt het beveiligde formulier hierboven. Het importtoken is uitsluitend voor het dashboard, niet voor inloggen op Bouwberichten.nl.
 5. Valideer eerst een kleine batch echte projecten. Controleer lokaal met `node scripts/import-leads.mjs --file projecten.json --dry-run`. Een dry run verzendt niets.
 6. Importeer de gecontroleerde batch met `node scripts/import-leads.mjs --file projecten.json`. Het script leest URL en token uit zijn omgeving; geef het token niet als opdrachtregelargument mee.
 7. Herhaal hetzelfde bestand. De bestaande projecten moeten dezelfde lead-ID behouden. Controleer daarna een wijziging terwijl de lead notities, een verkoper en een Kanban-status heeft.

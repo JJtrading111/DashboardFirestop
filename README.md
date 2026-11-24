@@ -40,7 +40,7 @@ De scraper-skill en beveiligde importvoorbereiding voor Bouwberichten.nl zijn be
 
 Via **Import instellen** kan de hoofdbeheerder per bron een sleutel maken, vernieuwen, pauzeren of intrekken. Gebruik voor hetzelfde Bouwberichten-project in alle filters hetzelfde externe ID: het blijft dan één centrale lead met meerdere bronlabels, gedeelde belwachttijd en behouden bedrijfsopvolging. Rapporten per bron kunnen overlappen; het bedrijfstotaal telt een lead één keer. Lidmaatschappen blijven historisch bewaard wanneer een project later niet meer in een filter wordt gevonden. Andere brontypen behouden hun eigen projectidentiteit per bron.
 
-Het aangemelde projectoverzicht en de opgegeven selectie zijn bekeken. Automatisch ophalen en een blijvende bronlogin zijn nog niet ingericht; een opgeslagen filter start geen scraper.
+Het aangemelde projectoverzicht en de opgegeven selectie zijn bekeken. Via **Automatisch ophalen** kan een hoofdbeheerder de Bouwberichten-aanmelding versleuteld opslaan en een proef met vijf projecten starten. Pas na een geslaagde proef worden volledig ophalen en dagelijks ophalen beschikbaar. De aparte Railway-worker gebruikt een tijdelijke browsercontext, verwerkt de selectie via de portal-API en levert gevalideerde batches terug aan het dashboard. Een opgeslagen filter alleen start geen scraper. Een echte verbinding is pas bewezen wanneer de bronproef slaagt.
 
 De hoofdbeheerder kan bij **Bronnen & koppelingen** bronnen toevoegen, configureren en na bevestiging verwijderen. Geef een naam op en eventueel een bron-URL en gebruikersnaam. Opslaan maakt nog geen verbinding; nieuwe bronnen staan op **Niet gekoppeld**. Wachtwoorden en toegangstokens horen niet in deze velden.
 
@@ -63,12 +63,16 @@ Benodigde omgevingsvariabelen:
 | `ADMIN_PASSWORD` | Beheerwachtwoord van 12–256 tekens; activeert de eigenaar rechtstreeks voor aanmelden via `/login` |
 | `BOOTSTRAP_TOKEN` | Een willekeurig geheim van minstens 32 URL-veilige tekens voor de eerste activatie |
 | `DEMO_CLEANUP_ID` | Optioneel: unieke naam voor een eenmalige opruiming van demoleads bij het opstarten; normaal leeg |
+| `SCRAPER_ENCRYPTION_KEY` | Voor automatisch ophalen: 32 willekeurige bytes als base64url; versleutelt bronwachtwoorden in het dashboardvolume |
+| `SCRAPER_WORKER_TOKEN` | Voor automatisch ophalen: gedeelde machinesleutel van minstens 43 URL-veilige tekens voor de aparte worker; geeft geen dashboardlogin |
 
 Met `ADMIN_PASSWORD` ingesteld beheert Railway de bestaande eigenaarlogin. De server bewaart het wachtwoord gehasht in de database en behoudt diens bedrijf en geschiedenis. Een gewijzigd beheerwachtwoord of e-mailadres wordt bij de volgende deployment toegepast en trekt bestaande beheerderssessies in. Een ongewijzigde instelling behoudt bestaande sessies. Dit eigenaaraccount blijft hoofdbeheerder. Bewaar de werkelijke waarden uitsluitend in Railway Variables; zet ze nooit in GitHub.
 
 Als alternatief zonder `ADMIN_PASSWORD` heeft de eerste activatielink de vorm `APP_URL/#activate=BOOTSTRAP_TOKEN`. Verstrek deze alleen aan de eigenaar. De server maakt de eerste uitnodiging één keer aan en heractiveert haar niet bij een herstart. Een rechtstreeks ingestelde beheerlogin maakt een nog openstaande eigenaaruitnodiging ongeldig. Uitnodigingsgeheimen staan in een URL-fragment en worden door de client na het openen uit de adresbalk verwijderd.
 
 Gebruik één replica: SQLite en het volume horen bij dezelfde service. Gezondheidscontrole: `/health`.
+
+De aparte worker gebruikt `scraper/Dockerfile`, zonder publiek domein of datavolume. Railway gebruikt rechtstreeks ingestelde service-instellingen (startopdracht `node worker.mjs`, één replica, herstart bij fouten); de oude Config-as-Code-koppeling is leeg. Stel `DASHBOARD_URL` en dezelfde `SCRAPER_WORKER_TOKEN` in. De webservice blijft de enige schrijver van SQLite. Zie de scraperhandleiding voor aanmelding, proef, planning, limieten en intrekken van toegang.
 
 ## Lokaal ontwikkelen en testen
 
@@ -78,6 +82,6 @@ Node.js 24 is vereist. Er zijn geen externe runtimepakketten nodig. Stel de vari
 
 ## Huidige grenzen
 
-Nieuwe installaties starten zonder demoleads. Handmatig toegevoegde leads en opvolging worden gedeeld opgeslagen. Bestaande demoleads kunnen door een hoofdbeheerder worden opgeruimd via de onderhoudsactie `demo.remove`. Ook de beheerder van de Railway-omgeving kan hiervoor een eenmalige `DEMO_CLEANUP_ID` instellen. De opruiming, het privéarchief en de registratie van de uitgevoerde onderhoudsstap worden samen opgeslagen; dezelfde naam voert de stap bij een herstart niet nogmaals uit. Alleen records met `demo === true` worden verwijderd. Accounts, uitnodigingen, instellingen en handmatige leads blijven behouden. Er is hiervoor geen extra openbaar onderhoudsendpoint. Bouwberichten.nl, hotels, VvE en Outlook zijn nog niet aangesloten; de app bewaart geen bronwachtwoorden. Terugbelmeldingen verschijnen in een geopend tabblad en worden iedere 30 seconden ververst. Er is nog geen automatische e-mailverzending of e-mailgestuurde wachtwoordherstelprocedure.
+Nieuwe installaties starten zonder demoleads. Handmatig toegevoegde leads en opvolging worden gedeeld opgeslagen. Bestaande demoleads kunnen door een hoofdbeheerder worden opgeruimd via de onderhoudsactie `demo.remove`. Ook de beheerder van de Railway-omgeving kan hiervoor een eenmalige `DEMO_CLEANUP_ID` instellen. De opruiming, het privéarchief en de registratie van de uitgevoerde onderhoudsstap worden samen opgeslagen; dezelfde naam voert de stap bij een herstart niet nogmaals uit. Alleen records met `demo === true` worden verwijderd. Accounts, uitnodigingen, instellingen en handmatige leads blijven behouden. Er is hiervoor geen extra openbaar onderhoudsendpoint. De Bouwberichten-scraper vereist een geslaagde proef met een echt bronaccount. Hotels, VvE en Outlook hebben nog geen ingebouwde extractor. Terugbelmeldingen verschijnen in een geopend tabblad en worden iedere 30 seconden ververst. Er is nog geen automatische e-mailverzending of e-mailgestuurde wachtwoordherstelprocedure.
 
 Accounts gebruiken gehashte wachtwoorden en willekeurige, gehashte sessie- en uitnodigingstokens. De server controleert rollen en bedrijfsrechten bij iedere wijziging. Cookies zijn in productie HttpOnly, Secure en SameSite=Lax; schrijfacties vereisen een sessiegebonden CSRF-token.
