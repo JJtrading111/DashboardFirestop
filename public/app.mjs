@@ -15,7 +15,7 @@ let state=null,session=null,authError='',authBusy=false,authRemember=false,activ
 const initialFragment=new URLSearchParams(location.hash.slice(1));
 if(initialFragment.has('activate')){activationToken=initialFragment.get('activate');initialFragment.delete('activate');history.replaceState(null,'',location.pathname+location.search);}
 let pref;try{pref=JSON.parse(localStorage.getItem(PREF));}catch{}pref||={};
-const ui={route:routes.some(r=>r[0]===location.hash.slice(1))?location.hash.slice(1):'dashboard',userId:null,companyId:pref.companyId||null,query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:'',drawer:null,modal:null,feedFilter:'all',reportCompany:'current',reportSeller:'all',reportSource:'all',reportFrom:'',reportTo:'',dismissed:pref.dismissed||[],mobile:false};
+const ui={route:routes.some(r=>r[0]===location.hash.slice(1))?location.hash.slice(1):'dashboard',userId:null,companyId:pref.companyId||null,query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:'',deliveryFrom:'',deliveryTo:'',projectDateSort:null,drawer:null,modal:null,feedFilter:'all',reportCompany:'current',reportSeller:'all',reportSource:'all',reportFrom:'',reportTo:'',dismissed:pref.dismissed||[],mobile:false};
 let transient=[],lastFocus=null,drawerScroll=0;
 const currentUser=()=>state.users.find(x=>x.id===ui.userId)||state.users[0];
 const isChief=()=>currentUser().role==='hoofdbeheerder';
@@ -132,12 +132,24 @@ async function authenticate(form,data){
 function toast(text,tone='green'){const id=uid('toast');transient.push({id,text,tone});renderToasts();setTimeout(()=>{transient=transient.filter(t=>t.id!==id);renderToasts();},6500);}
 function callbacks(){return state.leads.flatMap(l=>work(l).callbacks.map(cb=>({...cb,lead:l}))).filter(c=>!c.done).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));}
 function eligible(l){return callEligibility(state,l.id,company().id,currentUser().id);}
-function matchesConstructionStart(lead,from,to){
+const projectDateColumns={scheduleStart:'Start bouw',scheduleEnd:'Oplevering'};
+const isProjectDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value??'');
+function matchesProjectDate(date,from,to){
  if(!from&&!to)return true;
- const date=lead.projectDetails?.scheduleStart;
- return /^\d{4}-\d{2}-\d{2}$/.test(date??'')&&(!from||date>=from)&&(!to||date<=to);
+ return isProjectDate(date)&&(!from||date>=from)&&(!to||date<=to);
 }
-function filteredLeads(){return state.leads.filter(l=>{const w=work(l),q=ui.query.toLowerCase();return (!['leads','calls'].includes(ui.route)||matchesConstructionStart(l,ui.constructionFrom,ui.constructionTo))&&(!q||[l.title,l.organization,l.city,l.contact,...l.tags].join(' ').toLowerCase().includes(q))&&(ui.source==='all'||leadMatchesSource(l,ui.source))&&(ui.priority==='all'||w.priority===ui.priority)&&(ui.status==='all'||w.status===ui.status)&&(ui.owner==='all'||w.ownerId===(ui.owner==='me'?currentUser().id:ui.owner))&&(ui.availability==='all'||eligible(l).allowed);}).sort((a,b)=>({high:0,medium:1,low:2}[work(a).priority]-{high:0,medium:1,low:2}[work(b).priority])||new Date(b.updatedAt)-new Date(a.updatedAt));}
+function filteredLeads(){
+ const dateList=ui.route==='leads'||ui.route==='calls',sort=dateList?ui.projectDateSort:null;
+ return state.leads.filter(l=>{const w=work(l),q=ui.query.toLowerCase();return (!dateList||(matchesProjectDate(l.projectDetails?.scheduleStart,ui.constructionFrom,ui.constructionTo)&&matchesProjectDate(l.projectDetails?.scheduleEnd,ui.deliveryFrom,ui.deliveryTo)))&&(!q||[l.title,l.organization,l.city,l.contact,...l.tags].join(' ').toLowerCase().includes(q))&&(ui.source==='all'||leadMatchesSource(l,ui.source))&&(ui.priority==='all'||w.priority===ui.priority)&&(ui.status==='all'||w.status===ui.status)&&(ui.owner==='all'||w.ownerId===(ui.owner==='me'?currentUser().id:ui.owner))&&(ui.availability==='all'||eligible(l).allowed);}).sort((a,b)=>{
+  if(sort){
+   const first=a.projectDetails?.[sort.field],second=b.projectDetails?.[sort.field];
+   const firstKnown=isProjectDate(first),secondKnown=isProjectDate(second);
+   if(firstKnown!==secondKnown)return firstKnown?-1:1;
+   if(firstKnown&&first!==second)return (first<second?-1:1)*(sort.direction==='asc'?1:-1);
+  }
+  return ({high:0,medium:1,low:2}[work(a).priority]-{high:0,medium:1,low:2}[work(b).priority])||new Date(b.updatedAt)-new Date(a.updatedAt);
+ });
+}
 function navTo(route){ui.route=route;ui.drawer=null;ui.modal=null;ui.mobile=false;location.hash=route;render();}
 function btn(text,action,style='secondary',extra=''){return `<button type="button" class="button ${style}" data-action="${action}" ${extra}>${text}</button>`;}
 const activeSources=()=>state.sources.filter(s=>!s.deleted);
@@ -251,7 +263,7 @@ async function refreshScraperModal(){
 function priorityBadge(p){return `<span class="priority ${p}">${esc(priorityNames[p])}</span>`;}
 function heading(title,subtitle,actions=''){return `<div class="page-heading"><div><div class="eyebrow">${esc(company().name)}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="heading-actions">${actions}</div></div>`;}
 function empty(message='Geen leads gevonden.',action=''){return `<div class="empty-state">${icon('layers')}<h3>${message}</h3><p>Pas je filters aan of voeg een nieuwe lead toe.</p>${action}</div>`;}
-function resetFilters(){Object.assign(ui,{query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:''});}
+function resetFilters(){Object.assign(ui,{query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:'',deliveryFrom:'',deliveryTo:''});}
 function render(){
  if(!state||!session?.authenticated){renderAuth();return;}
  if(!isChief())ui.companyId=currentUser().companyId;if(!state.companies.some(c=>c.id===ui.companyId))ui.companyId=state.companies[0].id;
@@ -264,16 +276,29 @@ function dashboardPage(){const all=state.leads,available=all.filter(l=>eligible(
 function stat(label,value,meta,i,tone){return `<div class="stat-card"><div class="stat-top"><span class="stat-label">${label}</span><span class="stat-icon ${tone}">${icon(i)}</span></div><div class="stat-value">${value}</div><div class="stat-meta">${meta}</div></div>`;}
 function filters(){return `<div class="toolbar"><label class="search">${icon('search')}<input id="lead-search" type="search" placeholder="Zoek project, organisatie of plaats…" aria-label="Zoek leads" data-field="query" value="${esc(ui.query)}"></label>${selectFilter('source','Bron',[['all','Alle bronnen'],...leadSourceOptions()])}${selectFilter('priority','Prioriteit',[['all','Alle prioriteiten'],...Object.entries(priorityNames)])}${selectFilter('status','Status',[['all','Alle statussen'],...company().columns.map(c=>[c.id,c.name])])}${selectFilter('owner','Verkoper',[['all','Alle verkopers'],['me','Mijn leads'],...activeUsers().map(u=>[u.id,u.name])])}<button class="button ghost small" data-action="reset-filters">Wis filters</button></div>`;}
 function selectFilter(field,label,options){return `<label class="filter-select"><span class="sr-only">${label}</span><select data-field="${field}" aria-label="${label}">${options.map(([v,l])=>`<option value="${v}" ${ui[field]===v?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`;}
-function constructionStartFilters(){
- const {constructionFrom:from,constructionTo:to}=ui,invalid=!!(from&&to&&from>to);
- return `<fieldset class="construction-start-filters"><legend>Start bouw</legend>
-  <label for="construction-from">Vanaf <input id="construction-from" type="date" data-field="constructionFrom" value="${esc(from)}" max="${esc(to||'9999-12-31')}"${invalid?' aria-invalid="true" aria-describedby="construction-range-error"':''}></label>
-  <label for="construction-to">Tot en met <input id="construction-to" type="date" data-field="constructionTo" value="${esc(to)}" min="${esc(from)}" max="9999-12-31"${invalid?' aria-invalid="true" aria-describedby="construction-range-error"':''}></label>
-  ${invalid?'<p id="construction-range-error" role="status">Kies een einddatum op of na de begindatum.</p>':''}
+function projectDateFilter(label,key){
+ const from=ui[key+'From'],to=ui[key+'To'],invalid=!!(from&&to&&from>to);
+ const errorId=key+'-range-error',errorAttrs=invalid?` aria-invalid="true" aria-describedby="${errorId}"`:'';
+ return `<fieldset class="project-date-filter"><legend>${label}</legend>
+  <label for="${key}-from">Vanaf <input id="${key}-from" type="date" data-field="${key}From" value="${esc(from)}" max="${esc(to||'9999-12-31')}"${errorAttrs}></label>
+  <label for="${key}-to">Tot en met <input id="${key}-to" type="date" data-field="${key}To" value="${esc(to)}" min="${esc(from)}" max="9999-12-31"${errorAttrs}></label>
+  ${invalid?`<p id="${errorId}" role="status">Kies een einddatum op of na de begindatum.</p>`:''}
  </fieldset>`;
 }
-function leadTable(leads,compact=false){if(!leads.length)return empty();return `<div class="table-wrap"><table><thead><tr><th>Project & organisatie</th>${compact?'':'<th class="construction-start-cell">Start bouw</th>'}<th>Bron</th><th>Prioriteit</th><th>Status</th>${compact?'':'<th>Verkoper</th>'}<th>Opvolging</th><th><span class="sr-only">Openen</span></th></tr></thead><tbody>${leads.map(l=>{const w=work(l),e=eligible(l);return `<tr><td><button class="lead-title" data-action="open-lead" data-id="${l.id}">${esc(l.title)}</button><div class="lead-meta">${esc(l.organization)} <span>·</span> ${esc(l.city)}</div></td>${compact?'':`<td class="construction-start-cell">${projectDay(l.projectDetails?.scheduleStart)?`<time datetime="${esc(l.projectDetails.scheduleStart)}">${esc(projectDay(l.projectDetails.scheduleStart))}</time>`:'<span class="muted">Onbekend</span>'}</td>`}<td>${leadSourceBadges(l)}</td><td>${priorityBadge(w.priority)}</td><td><span class="status-pill status-${company().columns.findIndex(c=>c.id===w.status)}">${esc(statusName(w.status))}</span></td>${compact?'':`<td><span class="seller-cell">${esc(w.ownerId?userName(w.ownerId):'Niet toegewezen')}</span></td>`}<td><span class="call-state ${e.allowed?'available':'waiting'}">${icon(e.allowed?'phone':'clock')}${e.reason==='callback'?'Eigen terugbelmoment':e.allowed?'Nu belbaar':'Wachttijd'}</span><div class="lead-meta">${w.commitment?'Toezegging':''}${w.commitment&&w.calculation?' · ':''}${w.calculation?'Calculatie':''}</div></td><td><button class="button icon small" data-action="open-lead" data-id="${l.id}" aria-label="Open ${esc(l.title)}">${icon('chevron')}</button></td></tr>`;}).join('')}</tbody></table></div>`;}
-function leadsPage(){const leads=filteredLeads();return `${heading('Alle leads','Eén centrale voorraad. De opvolging die je hier ziet, hoort bij je actieve bedrijf.',`${btn(`${icon('download')} Exporteer selectie`,'export','secondary')}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}<section class="panel">${filters()}${constructionStartFilters()}<div class="section-heading"><strong>${leads.length} leads</strong><span class="muted">Statussen en notities van ${esc(company().name)}</span></div>${leadTable(leads)}</section>`;}
+function projectDateFilters(){
+ return `<div class="project-date-filters">${projectDateFilter('Start bouw','construction')}${projectDateFilter('Oplevering','delivery')}</div>`;
+}
+function projectDateHeader(field,label){
+ const direction=ui.projectDateSort?.field===field?ui.projectDateSort.direction:null;
+ const arrows=[['asc','↑','vroeg naar laat'],['desc','↓','laat naar vroeg']];
+ return `<th class="project-date-cell" scope="col"${direction?` aria-sort="${direction==='asc'?'ascending':'descending'}"`:''}><span class="project-date-heading">${label}<span class="project-date-arrows">${arrows.map(([value,arrow,order])=>`<button type="button" id="sort-${field}-${value}" data-action="sort-project-date" data-id="${field}" data-value="${value}" aria-pressed="${direction===value}" aria-label="${label} sorteren van ${order}" title="${label} sorteren van ${order}">${arrow}</button>`).join('')}</span></span></th>`;
+}
+function projectDateCell(value){
+ const date=projectDay(value);
+ return `<td class="project-date-cell">${date?`<time datetime="${esc(value)}">${esc(date)}</time>`:'<span class="muted">Onbekend</span>'}</td>`;
+}
+function leadTable(leads,compact=false){if(!leads.length)return empty();return `<div class="table-wrap"><table><thead><tr><th>Project & organisatie</th>${compact?'':Object.entries(projectDateColumns).map(([field,label])=>projectDateHeader(field,label)).join('')}<th>Bron</th><th>Prioriteit</th><th>Status</th>${compact?'':'<th>Verkoper</th>'}<th>Opvolging</th><th><span class="sr-only">Openen</span></th></tr></thead><tbody>${leads.map(l=>{const w=work(l),e=eligible(l);return `<tr><td><button class="lead-title" data-action="open-lead" data-id="${l.id}">${esc(l.title)}</button><div class="lead-meta">${esc(l.organization)} <span>·</span> ${esc(l.city)}</div></td>${compact?'':`${projectDateCell(l.projectDetails?.scheduleStart)}${projectDateCell(l.projectDetails?.scheduleEnd)}`}<td>${leadSourceBadges(l)}</td><td>${priorityBadge(w.priority)}</td><td><span class="status-pill status-${company().columns.findIndex(c=>c.id===w.status)}">${esc(statusName(w.status))}</span></td>${compact?'':`<td><span class="seller-cell">${esc(w.ownerId?userName(w.ownerId):'Niet toegewezen')}</span></td>`}<td><span class="call-state ${e.allowed?'available':'waiting'}">${icon(e.allowed?'phone':'clock')}${e.reason==='callback'?'Eigen terugbelmoment':e.allowed?'Nu belbaar':'Wachttijd'}</span><div class="lead-meta">${w.commitment?'Toezegging':''}${w.commitment&&w.calculation?' · ':''}${w.calculation?'Calculatie':''}</div></td><td><button class="button icon small" data-action="open-lead" data-id="${l.id}" aria-label="Open ${esc(l.title)}">${icon('chevron')}</button></td></tr>`;}).join('')}</tbody></table></div>`;}
+function leadsPage(){const leads=filteredLeads();return `${heading('Alle leads','Eén centrale voorraad. De opvolging die je hier ziet, hoort bij je actieve bedrijf.',`${btn(`${icon('download')} Exporteer selectie`,'export','secondary')}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}<section class="panel">${filters()}${projectDateFilters()}<div class="section-heading"><strong>${leads.length} leads</strong><span class="muted">Statussen en notities van ${esc(company().name)}</span></div>${leadTable(leads)}</section>`;}
 function kanbanPage(){
  const columns=company().columns.map((c,i)=>{
   const selected=filteredLeads().filter(l=>work(l).status===c.id);
@@ -286,7 +311,7 @@ function kanbanPage(){
  }).join('');
  return `${heading('Van kans naar opdracht','Klik op een kaart om de lead te openen of sleep deze naar een andere kolom.',`${canManage()?btn(`${icon('edit')} Kolommen beheren`,'columns'):''}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}${filters()}<div class="kanban">${columns}</div><p class="muted help-text">Opvolgen staat op datum van het vroegste open terugbelmoment, de vroegste datum bovenaan. Leads zonder terugbelmoment staan onderaan.</p>`;
 }
-function callsPage(){const leads=filteredLeads(),available=leads.filter(l=>eligible(l).allowed);return `${heading('Een goed gesprek begint hier','Werk je prioriteiten af. Een belregistratie start de wachttijd voor andere bedrijven.',btn(`${icon('download')} Exporteer bellijst`,'export'))}<div class="call-summary"><div>${icon('phone')}<strong>${available.length} leads nu belbaar</strong></div><span>Globale wachttijd: <strong>${state.settings.cooldownHours} uur</strong> · Eigen vervallen terugbelafspraken hebben voorrang.</span>${btn('Instellingen','go-settings','ghost small')}</div><section class="panel">${filters()}${constructionStartFilters()}<div class="filter-row"><label class="check-row"><input type="checkbox" data-field="available-check" ${ui.availability==='available'?'checked':''}> Alleen nu belbare leads</label></div>${leadTable(leads)}</section>`;}
+function callsPage(){const leads=filteredLeads(),available=leads.filter(l=>eligible(l).allowed);return `${heading('Een goed gesprek begint hier','Werk je prioriteiten af. Een belregistratie start de wachttijd voor andere bedrijven.',btn(`${icon('download')} Exporteer bellijst`,'export'))}<div class="call-summary"><div>${icon('phone')}<strong>${available.length} leads nu belbaar</strong></div><span>Globale wachttijd: <strong>${state.settings.cooldownHours} uur</strong> · Eigen vervallen terugbelafspraken hebben voorrang.</span>${btn('Instellingen','go-settings','ghost small')}</div><section class="panel">${filters()}${projectDateFilters()}<div class="filter-row"><label class="check-row"><input type="checkbox" data-field="available-check" ${ui.availability==='available'?'checked':''}> Alleen nu belbare leads</label></div>${leadTable(leads)}</section>`;}
 function callbackCard(c,inWorkbook=false){
  const due=Date.parse(c.dueAt)<=Date.now(),leadId=esc(c.lead.id),attributes=`data-id="${esc(c.id)}" data-lead-id="${leadId}"`;
  return `<article class="callback-card"><div class="callback-time ${due?'overdue':''}">${icon('clock')} ${due?'Nu opvolgen · ':''}${fmt(c.dueAt)}</div>
@@ -352,7 +377,7 @@ function safeLeadLink(value){
  try{const url=new URL(value);return ['https:','http:'].includes(url.protocol)&&!url.username&&!url.password?url.href:'';}catch{return '';}
 }
 function leadImageURL(l){return /^\/api\/lead-images\/lead-[0-9a-f-]{36}\?v=[0-9a-f]{64}$/.test(l.projectImageUrl??'')?l.projectImageUrl:'';}
-const projectDay=value=>/^\d{4}-\d{2}-\d{2}$/.test(value??'')?fmt(value,{year:'numeric',hour:undefined,minute:undefined}):'';
+const projectDay=value=>isProjectDate(value)?fmt(value,{year:'numeric',hour:undefined,minute:undefined}):'';
 
 function workbookProjectHTML(l){
  const d=l.projectDetails??{},photo=leadImageURL(l),website=safeLeadLink(d.website);
@@ -528,6 +553,13 @@ document.addEventListener('click',async e=>{
    }
    case'switch-company':await switchCompany(id);break;
    case'reset-filters':resetFilters();render();break;
+   case'sort-project-date':{
+    const direction=target.dataset.value;
+    if(!Object.hasOwn(projectDateColumns,id)||!['asc','desc'].includes(direction))return;
+    const previous=ui.projectDateSort;
+    ui.projectDateSort=previous?.field===id&&previous.direction===direction?null:{field:id,direction};
+    render();document.getElementById('sort-'+id+'-'+direction)?.focus();break;
+   }
    case'dash-filter':resetFilters();if(target.dataset.value==='available')ui.availability='available';if(target.dataset.value==='me')ui.owner='me';render();break;
    case'feed-filter':ui.feedFilter=target.dataset.value;render();break;
    case'go-settings':navTo('settings');break;
@@ -567,7 +599,7 @@ document.addEventListener('change',async e=>{
   return;
  }
  try{
-  if(el.dataset.field){const f=el.dataset.field;if(f==='company'){await switchCompany(el.value);return;}else if(f==='available-check')ui.availability=el.checked?'available':'all';else if(f!=='query')ui[f]=el.value;if(f==='reportCompany')ui.reportSeller='all';render();if(f==='constructionFrom'||f==='constructionTo')document.getElementById(el.id)?.focus();}
+  if(el.dataset.field){const f=el.dataset.field;if(f==='company'){await switchCompany(el.value);return;}else if(f==='available-check')ui.availability=el.checked?'available':'all';else if(f!=='query')ui[f]=el.value;if(f==='reportCompany')ui.reportSeller='all';render();if(['constructionFrom','constructionTo','deliveryFrom','deliveryTo'].includes(f))document.getElementById(el.id)?.focus();}
   if(el.dataset.work){const field=el.dataset.work;el.disabled=true;await mutate('workspace.update',{leadId:el.dataset.id,field,value:el.type==='checkbox'?el.checked:el.value||null});render();$('[data-work="'+field+'"]')?.focus();}
  }catch(error){if(state){render();toast(error.message,'amber');}}
 });
@@ -610,7 +642,7 @@ document.addEventListener('keydown',e=>{const card=e.target.closest('.kanban-car
 window.addEventListener('hashchange',()=>{const r=location.hash.slice(1);if(routes.some(x=>x[0]===r)&&r!==ui.route){ui.route=r;ui.drawer=null;ui.modal=null;render();}});
 
 function csv(name,rows){const cell=v=>{let value=String(v??'');if(/^[=+\-@\t\r]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"';};const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('Je export is klaargezet als CSV-bestand.');}
-function exportLeads(){csv(`bouwberichten-${ui.route==='calls'?'bellijst':'leads'}.csv`,[['Project','Organisatie','Plaats','Start bouw','Bron','Contact','Telefoon','E-mail','Status','Prioriteit','Verkoper','Toezegging','Klaar voor calculatie','Nu belbaar'],...filteredLeads().map(l=>{const w=work(l);return[l.title,l.organization,l.city,l.projectDetails?.scheduleStart||'',leadSourceIds(l).map(sourceName).join(' · '),l.contact,l.phone,l.email,statusName(w.status),priorityNames[w.priority],userName(w.ownerId),w.commitment?'Ja':'Nee',w.calculation?'Ja':'Nee',eligible(l).allowed?'Ja':'Nee'];})]);}
+function exportLeads(){csv(`bouwberichten-${ui.route==='calls'?'bellijst':'leads'}.csv`,[['Project','Organisatie','Plaats','Start bouw','Oplevering','Bron','Contact','Telefoon','E-mail','Status','Prioriteit','Verkoper','Toezegging','Klaar voor calculatie','Nu belbaar'],...filteredLeads().map(l=>{const w=work(l);return[l.title,l.organization,l.city,l.projectDetails?.scheduleStart||'',l.projectDetails?.scheduleEnd||'',leadSourceIds(l).map(sourceName).join(' · '),l.contact,l.phone,l.email,statusName(w.status),priorityNames[w.priority],userName(w.ownerId),w.commitment?'Ja':'Nee',w.calculation?'Ja':'Nee',eligible(l).allowed?'Ja':'Nee'];})]);}
 function exportReport(){const cid=isChief()?(ui.reportCompany==='current'?company().id:ui.reportCompany):company().id;const rows=reportRows(state,{companyId:cid,sellerId:ui.reportSeller,source:ui.reportSource,from:ui.reportFrom,to:ui.reportTo});csv('bouwberichten-conversierapport.csv',[['Bedrijf','Verkoper','Bron','Toegewezen leads','Gebeld','Toezeggingen','Calculaties','Conversie (%)'],...rows.map(r=>[r.companyName,r.sellerName,reportSourceLabel(r),r.total,r.contacted,r.commitments,r.calculations,Math.round(r.conversion)])]);}
 initialize();
 setInterval(refreshScraperModal,10000);
