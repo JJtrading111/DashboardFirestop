@@ -24,6 +24,8 @@ De hoofdbeheerder kan bij **Instellingen → Belwachttijd tussen bedrijven** kie
 
 Een nieuwe link maken maakt de vorige link ongeldig. Een uitnodiging kan ook worden ingetrokken. Bedrijfsbeheerders beheren uitnodigingen voor het eigen bedrijf; alleen de hoofdbeheerder kan een hoofdbeheerder uitnodigen of mensen naar een ander bedrijf overplaatsen. Bestaande gespreksgeschiedenis blijft bij het oorspronkelijke bedrijf.
 
+Bij **Uitnodigingslinks → Verwijderen** kun je na bevestiging een regel uit de lijst verwijderen, ook als de uitnodiging al is gebruikt, verlopen of ingetrokken. De link werkt daarna niet meer. Bestaande gebruikersaccounts, sessies en opvolgingsgeschiedenis blijven behouden. De hoofdbeheerder kan alle uitnodigingen verwijderen; een bedrijfsbeheerder alleen uitnodigingen binnen het eigen bedrijf, behalve voor hoofdbeheerders.
+
 ## Bedrijfsnaam en logo
 
 Open **Bedrijven & mensen → Bewerken** om een bedrijfsnaam aan te passen, een logo te uploaden of het bestaande logo te verwijderen. De hoofdbeheerder kan ieder bedrijf bewerken; een bedrijfsbeheerder alleen het eigen bedrijf. Verkopers zien geen bewerkknop.

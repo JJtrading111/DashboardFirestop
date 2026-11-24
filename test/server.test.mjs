@@ -1054,3 +1054,103 @@ test('company administrators and sellers cannot change the global call-wait unit
   assert.equal(settings.cooldownHours, 48);
   assert.equal(settings.cooldownUnit, 'days');
 });
+
+test('deleting invitations in every status removes only the invitation, preserving accounts and history after restart', async t => {
+  const env = await fixture();
+  t.after(() => env.close());
+  const owner = env.client(), activatedUser = env.client(), anonymous = env.client();
+  accepted(await owner.activate(env.bootstrapToken, 'Eigenaar met blijvend account'));
+  const create = async (name, email) => accepted(await owner.action('invitation.create', 'c-noord', {name, email, companyId: 'c-noord', role: 'verkoper'})).result;
+  const pending = await create('Open uitnodiging', 'delete-pending@example.test');
+  const revoked = await create('Ingetrokken uitnodiging', 'delete-revoked@example.test');
+  accepted(await owner.action('invitation.revoke', 'c-noord', {invitationId: revoked.invitation.id}));
+  const expired = await create('Verlopen uitnodiging', 'delete-expired@example.test');
+  const setup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+  setup.prepare('UPDATE invitations SET expires_at=? WHERE id=?').run(Date.now() - 1000, expired.invitation.id);
+  setup.close();
+  const acceptedInvitation = await create('Gebruiker blijft actief', 'delete-accepted@example.test');
+  accepted(await activatedUser.activate(acceptedInvitation.token, 'Gebruiker blijft actief', OTHER_PASSWORD));
+  accepted(await activatedUser.action('note.add', 'c-noord', {leadId: 'l-01', text: 'Deze notitie blijft bestaan na het verwijderen van de uitnodiging'}));
+  accepted(await activatedUser.action('call.record', 'c-noord', {leadId: 'l-01'}));
+  accepted(await activatedUser.action('callback.add', 'c-noord', {leadId: 'l-01', dueAt: new Date(Date.now() + 7200000).toISOString(), assigneeId: activatedUser.user.id}));
+  const initial = databaseSnapshot(env.dataDir);
+  const deletions = [
+    ['pending', pending.invitation.id, pending.token],
+    ['revoked', revoked.invitation.id, revoked.token],
+    ['expired', expired.invitation.id, expired.token],
+    ['accepted', acceptedInvitation.invitation.id, acceptedInvitation.token],
+    ['accepted bootstrap owner', 'bootstrap-owner', env.bootstrapToken]
+  ];
+  for (const [status, invitationId, token] of deletions) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action('invitation.delete', 'c-noord', {invitationId}, {csrf: false})).status, 403, `${status} deletion requires CSRF`);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+    const result = accepted(await owner.action('invitation.delete', 'c-noord', {invitationId}), status);
+    assert.equal(result.state.invitations.some(invitation => invitation.id === invitationId), false);
+    const after = databaseSnapshot(env.dataDir);
+    assert.deepEqual(after.invitations, before.invitations.filter(invitation => invitation.id !== invitationId));
+    assert.deepEqual(after.state.users, before.state.users);
+    assert.deepEqual(after.state.companies, before.state.companies);
+    assert.deepEqual(after.state.settings, before.state.settings);
+    assert.deepEqual(after.state.leads, before.state.leads);
+    assert.deepEqual(after.state.workspaces, before.state.workspaces);
+    assert.deepEqual(after.state.callLog, before.state.callLog);
+    assert.deepEqual(after.credentials, before.credentials);
+    assert.deepEqual(after.sessions, before.sessions);
+    assert.deepEqual(after.archives, before.archives);
+    assert.deepEqual(after.migrations, before.migrations);
+    assert.deepEqual(after.companyLogos, before.companyLogos);
+    assert.equal((await anonymous.request('/api/invitations/preview', {method: 'POST', body: {token}})).status, 410);
+    assert.equal((await anonymous.activate(token)).status, 410);
+    assert.equal((await owner.action('invitation.rotate', 'c-noord', {invitationId})).status, 404);
+    assert.equal((await owner.action('invitation.delete', 'c-noord', {invitationId})).status, 404);
+  }
+  assert.equal(accepted(await owner.request('/api/session')).authenticated, true);
+  assert.equal(accepted(await activatedUser.request('/api/session')).authenticated, true);
+  await env.restart();
+  const afterRestart = databaseSnapshot(env.dataDir);
+  assert.equal(afterRestart.invitations.length, 0, 'Deleting the accepted bootstrap row must not recreate an invitation on restart');
+  assert.deepEqual(afterRestart.credentials, initial.credentials);
+  assert.deepEqual(afterRestart.sessions, initial.sessions);
+  assert.deepEqual(afterRestart.state.users, initial.state.users);
+  assert.deepEqual(afterRestart.state.workspaces, initial.state.workspaces);
+  assert.equal(accepted(await owner.request('/api/session')).user.id, 'u-admin');
+  const freshUser = env.client();
+  const login = accepted(await freshUser.login('delete-accepted@example.test', OTHER_PASSWORD));
+  assert.equal(login.user.id, activatedUser.user.id);
+  assert.equal(login.user.status, 'actief');
+  assert.ok(accepted(await freshUser.state()).state.workspaces['c-noord']['l-01'].notes.some(note => note.text === 'Deze notitie blijft bestaan na het verwijderen van de uitnodiging'));
+});
+
+test('only authorized administrators can delete invitations within their permitted company and role', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client(), northAdmin = env.client(), deltaAdmin = env.client(), seller = env.client();
+  accepted(await owner.login());
+  const invite = async (name, email, companyId, role = 'verkoper') => accepted(await owner.action('invitation.create', 'c-noord', {name, email, companyId, role})).result;
+  const northAdminInvite = await invite('Noord beheerder', 'delete-north-admin@example.test', 'c-noord', 'bedrijfsbeheerder');
+  const deltaAdminInvite = await invite('Delta beheerder', 'delete-delta-admin@example.test', 'c-delta', 'bedrijfsbeheerder');
+  const sellerInvite = await invite('Noord verkoper', 'delete-north-seller@example.test', 'c-noord');
+  accepted(await northAdmin.activate(northAdminInvite.token, 'Noord beheerder'));
+  accepted(await deltaAdmin.activate(deltaAdminInvite.token, 'Delta beheerder'));
+  accepted(await seller.activate(sellerInvite.token, 'Noord verkoper'));
+  const headInvite = await invite('Nieuwe hoofdbeheerder', 'delete-head@example.test', 'c-noord', 'hoofdbeheerder');
+  const deltaPending = await invite('Delta open uitnodiging', 'delete-delta-pending@example.test', 'c-delta');
+  const beforeDenied = databaseSnapshot(env.dataDir);
+  assert.equal((await seller.action('invitation.delete', 'c-noord', {invitationId: sellerInvite.invitation.id})).status, 403);
+  assert.equal((await northAdmin.action('invitation.delete', 'c-noord', {invitationId: headInvite.invitation.id})).status, 403);
+  assert.equal((await northAdmin.action('invitation.delete', 'c-noord', {invitationId: deltaPending.invitation.id})).status, 403);
+  assert.equal((await deltaAdmin.action('invitation.delete', 'c-delta', {invitationId: sellerInvite.invitation.id})).status, 403);
+  assert.deepEqual(databaseSnapshot(env.dataDir), beforeDenied);
+  const own = accepted(await northAdmin.action('invitation.delete', 'c-noord', {invitationId: sellerInvite.invitation.id}));
+  assert.equal(own.state.invitations.some(invitation => invitation.id === sellerInvite.invitation.id), false);
+  assert.equal(accepted(await seller.request('/api/session')).authenticated, true);
+  const foreignByChief = accepted(await owner.action('invitation.delete', 'c-noord', {invitationId: deltaPending.invitation.id}));
+  assert.equal(foreignByChief.state.invitations.some(invitation => invitation.id === deltaPending.invitation.id), false);
+  assert.equal((await owner.action('invitation.delete', 'c-noord', {invitationId: 'invite-record-that-does-not-exist'})).status, 404);
+  const remaining = databaseSnapshot(env.dataDir);
+  assert.deepEqual(remaining.credentials, beforeDenied.credentials);
+  assert.deepEqual(remaining.sessions, beforeDenied.sessions);
+  assert.deepEqual(remaining.state.users, beforeDenied.state.users);
+  assert.deepEqual(remaining.state.workspaces, beforeDenied.state.workspaces);
+});

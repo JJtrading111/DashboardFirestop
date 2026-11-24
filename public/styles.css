@@ -109,3 +109,6 @@
 @media(max-width:400px){.cooldown-duration{grid-template-columns:minmax(0,1fr);gap:12px}}
 
 @media(max-width:450px){.cooldown-duration{grid-template-columns:minmax(0,1fr)}}
+.invitation-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;max-width:100%}
+.invitation-actions .button{flex:0 0 auto}
+.modal .button.danger{min-height:44px}
