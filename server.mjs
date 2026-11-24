@@ -122,6 +122,7 @@ export function createApp(options={}){
  if(adminPassword&&(typeof adminPassword!=='string'||adminPassword.length<12||adminPassword.length>256))throw Error('ADMIN_PASSWORD must contain between 12 and 256 characters.');
  if(process.env.NODE_ENV==='production'&&!publicOrigin)throw Error('APP_URL is required in production.');
  if(publicOrigin&&new URL(publicOrigin).origin!==publicOrigin.replace(/\/$/,''))throw Error('APP_URL must contain only the public origin.');
+ const canonicalOrigin=publicOrigin?new URL(publicOrigin):null;
  if(dataDir!==':memory:')mkdirSync(dataDir,{recursive:true});
  const db=new DatabaseSync(dataDir===':memory:'?':memory:':path.join(dataDir,'dashboard.sqlite'));
  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -414,6 +415,8 @@ export function createApp(options={}){
  async function body(req,maxBytes=65536){if(!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))fail(415,'Gebruik een JSON-verzoek.');let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBytes)fail(413,'Dit verzoek is te groot.');chunks.push(chunk);}let parsed;try{parsed=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))||'{}');}catch{fail(400,'Het verzoek bevat ongeldige gegevens.');}if(!parsed||Array.isArray(parsed)||typeof parsed!=='object')fail(400,'Het verzoek bevat ongeldige gegevens.');return parsed;}
  const handler=async(req,res)=>{try{
   const url=new URL(req.url,'http://localhost');
+  // Compare the actual host only: HTTPS terminates at Railway before this server.
+  if(canonicalOrigin&&['GET','HEAD'].includes(req.method)&&assets.has(url.pathname)&&req.headers.host?.toLowerCase()!==canonicalOrigin.host){headers(res);res.writeHead(308,{Location:canonicalOrigin.origin+url.pathname+url.search});res.end();return;}
   if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true});
   if(url.pathname.startsWith('/api/')){
    headers(res,true);const ip=req.socket.remoteAddress||'unknown';
