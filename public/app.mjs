@@ -120,7 +120,7 @@ async function initialize(){
  }catch(error){authError=error.message;renderAuth();}
 }
 async function authenticate(form,data){
- const activating=form.id==='activation-form';if(!activating)authRemember=data.rememberMe==='true';
+ const activating=form.getAttribute('id')==='activation-form';if(!activating)authRemember=data.rememberMe==='true';
  if(activating&&data.password!==data.passwordConfirm)throw Error('De wachtwoorden komen niet overeen.');
  if(activating&&data.password.length<12)throw Error('Gebruik een wachtwoord van minimaal 12 tekens.');
  authBusy=true;authError='';const submit=form.querySelector('[type="submit"]');submit.disabled=true;submit.textContent='Even geduld…';
@@ -415,14 +415,14 @@ let searchTimer;
 document.addEventListener('input',e=>{if(e.target.dataset.field==='query'){const value=e.target.value,pos=e.target.selectionStart;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{ui.query=value;render();const input=$('#lead-search');input?.focus();try{input?.setSelectionRange(pos,pos);}catch{}},180);}});
 document.addEventListener('submit',async e=>{
  e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));
- if(form.id==='login-form'||form.id==='activation-form'){try{await authenticate(form,data);}catch(error){authError=error.message;renderAuth();}return;}
+ if(form.getAttribute('id')==='login-form'||form.getAttribute('id')==='activation-form'){try{await authenticate(form,data);}catch(error){authError=error.message;renderAuth();}return;}
  if(!state)return;
- if(form.id==='source-scraper-form'){try{await connectSourceScraper(form,data);}catch(error){if(state)toast(error.message||'Verbinden is niet gelukt.','amber');}return;}
+ if(form.getAttribute('id')==='source-scraper-form'){try{await connectSourceScraper(form,data);}catch(error){if(state)toast(error.message||'Verbinden is niet gelukt.','amber');}return;}
  const submit=form.querySelector('[type="submit"]');if(submit?.disabled)return;if(submit)submit.disabled=true;
  const modalType=ui.modal?.type;
  try{
   let response;
-  switch(form.id){
+  switch(form.getAttribute('id')){
    case'note-form':if(!data.text.trim())throw Error('Schrijf eerst een notitie.');response=await mutate('note.add',{leadId:data.leadId,text:data.text.trim()});break;
    case'lead-form':{
     const oldIds=new Set(state.leads.map(l=>l.id));response=await mutate('lead.create',{...data,status:ui.modal?.status});ui.drawer=response.result?.leadId||response.result?.lead?.id||state.leads.find(l=>!oldIds.has(l.id))?.id||null;break;
@@ -437,7 +437,7 @@ document.addEventListener('submit',async e=>{
    default:return;
   }
   ui.modal=null;render();
-  if(modalType==='invite')showInviteLink(response);else toast(['source-config','new-source'].includes(modalType)?'Bron opgeslagen. De importinstellingen blijven per bron gescheiden.':form.id==='note-form'?'Notitie opgeslagen en gedeeld met je bedrijf.':'Je wijziging is opgeslagen.');
+  if(modalType==='invite')showInviteLink(response);else toast(['source-config','new-source'].includes(modalType)?'Bron opgeslagen. De importinstellingen blijven per bron gescheiden.':form.getAttribute('id')==='note-form'?'Notitie opgeslagen en gedeeld met je bedrijf.':'Je wijziging is opgeslagen.');
  }catch(error){if(submit?.isConnected)submit.disabled=false;if(state)toast(error.message||'Opslaan is niet gelukt.','amber');}
 });
 
