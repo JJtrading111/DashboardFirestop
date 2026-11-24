@@ -8,6 +8,7 @@ import {randomBytes} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {deflateSync} from 'node:zlib';
 import {createApp} from '../server.mjs';
+import {reportRows} from '../public/model.mjs';
 
 const PASSWORD = 'Test-only-password-2026!';
 const OTHER_PASSWORD = 'Another-test-password-2026!';
@@ -1153,4 +1154,164 @@ test('only authorized administrators can delete invitations within their permitt
   assert.deepEqual(remaining.sessions, beforeDenied.sessions);
   assert.deepEqual(remaining.state.users, beforeDenied.state.users);
   assert.deepEqual(remaining.state.workspaces, beforeDenied.state.workspaces);
+});
+
+test('global source management is chief-only, requires CSRF and persists configured sources', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client(), seller = env.client(), manager = env.client();
+  accepted(await owner.login());
+  for (const [browser, name, email, role, companyId] of [[seller, 'Bron verkoper', 'source-seller@example.test', 'verkoper', 'c-noord'], [manager, 'Bron beheerder', 'source-manager@example.test', 'bedrijfsbeheerder', 'c-delta']]) {
+    const invitation = accepted(await owner.action('invitation.create', 'c-noord', {name, email, companyId, role})).result;
+    accepted(await browser.activate(invitation.token, name));
+  }
+  const beforeCreate = databaseSnapshot(env.dataDir);
+  assert.equal((await owner.action('source.create', 'c-noord', {name: 'Mag niet zonder CSRF'}, {csrf: false})).status, 403);
+  assert.deepEqual(databaseSnapshot(env.dataDir), beforeCreate);
+  const created = accepted(await owner.action('source.create', 'c-noord', {name: '  Nieuw Bouwcontact  ', url: 'https://source.example/catalogus', username: '  connector-gebruiker  '}));
+  const source = created.result.source;
+  assert.match(source.id, /^source-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  assert.equal(source.name, 'Nieuw Bouwcontact');
+  assert.equal(source.kind, 'lead');
+  assert.equal(source.enabled, false, 'Saving a source must not connect it');
+  assert.equal(source.url, 'https://source.example/catalogus');
+  assert.equal(source.username, 'connector-gebruiker');
+  for (const [browser, companyId] of [[seller, 'c-noord'], [manager, 'c-delta']]) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await browser.action('source.create', companyId, {name: 'Onbevoegde bron'})).status, 403);
+    assert.equal((await browser.action('source.update', companyId, {id: source.id, name: 'Onbevoegde wijziging', url: '', username: ''})).status, 403);
+    assert.equal((await browser.action('source.delete', companyId, {id: source.id})).status, 403);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+  for (const [type, payload] of [['source.update', {id: source.id, name: 'Zonder CSRF', url: '', username: ''}], ['source.delete', {id: source.id}]]) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action(type, 'c-noord', payload, {csrf: false})).status, 403);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+  const caseOnly = accepted(await owner.action('source.update', 'c-noord', {id: source.id, name: 'NIEUW BOUWCONTACT', url: 'http://source.example/nieuw', username: 'voorbereide-gebruiker'})).result.source;
+  assert.equal(caseOnly.id, source.id);
+  assert.equal(caseOnly.name, 'NIEUW BOUWCONTACT');
+  assert.equal(caseOnly.enabled, false);
+  const withoutName = accepted(await owner.action('source.update', 'c-noord', {id: source.id, url: 'https://source.example/definitief', username: 'eigen-gebruiker'})).result.source;
+  assert.equal(withoutName.name, 'NIEUW BOUWCONTACT', 'The optional name must keep the existing label when omitted');
+  assert.equal(withoutName.id, source.id);
+  await env.restart();
+  const reloaded = accepted(await owner.state()).state.sources.find(candidate => candidate.id === source.id);
+  assert.deepEqual(reloaded, withoutName);
+  const empty = accepted(await owner.action('source.create', 'c-noord', {name: 'Zonder verbinding'})).result.source;
+  assert.equal(empty.url, '');
+  assert.equal(empty.username, '');
+  assert.equal(empty.enabled, false);
+});
+
+test('source names, duplicate labels and unsafe URL configuration are rejected atomically', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  const source = accepted(await owner.action('source.create', 'c-noord', {name: 'Bewaarde bron', url: 'https://source.example/projecten', username: 'bewaarde-gebruiker'})).result.source;
+  for (const name of ['bewaarde BRON', '  BOUWBERICHTEN.NL  ']) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action('source.create', 'c-noord', {name})).status, 409);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+  const duplicateBefore = databaseSnapshot(env.dataDir);
+  assert.equal((await owner.action('source.update', 'c-noord', {id: source.id, name: 'HOTELS', url: 'https://source.example/veranderd', username: 'niet-opslaan'})).status, 409);
+  assert.deepEqual(databaseSnapshot(env.dataDir), duplicateBefore);
+  for (const name of ['', '   ', 'x'.repeat(121), null, true, {}]) {
+    for (const type of ['source.create', 'source.update']) {
+      const before = databaseSnapshot(env.dataDir);
+      assert.equal((await owner.action(type, 'c-noord', {id: source.id, name, url: 'https://source.example/geldig', username: 'geldig'})).status, 400);
+      assert.deepEqual(databaseSnapshot(env.dataDir), before);
+    }
+  }
+  for (const url of ['not-a-url', 'javascript:alert(1)', 'ftp://source.example/projecten', 'https://username:password@source.example/projecten', 'https://source.example/projecten?token=secret', 'https://source.example/projecten#fragment', 'https://' + 'x'.repeat(501), null, true]) {
+    for (const type of ['source.create', 'source.update']) {
+      const before = databaseSnapshot(env.dataDir);
+      assert.equal((await owner.action(type, 'c-noord', {id: source.id, name: 'Niet gedeeltelijk bewaren', url, username: 'geldig'})).status, 400);
+      assert.deepEqual(databaseSnapshot(env.dataDir), before);
+    }
+  }
+  for (const username of ['x'.repeat(161), null, true, {}]) {
+    const before = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action('source.update', 'c-noord', {id: source.id, name: 'Niet gedeeltelijk bewaren', url: 'https://source.example/geldig', username})).status, 400);
+    assert.deepEqual(databaseSnapshot(env.dataDir), before);
+  }
+  assert.equal((await owner.action('source.update', 'c-noord', {id: 'source-not-present', name: 'Onbekend', url: '', username: ''})).status, 404);
+  assert.equal((await owner.action('source.delete', 'c-noord', {id: 'source-not-present'})).status, 404);
+  assert.equal(accepted(await owner.action('source.create', 'c-noord', {name: 'X'})).result.source.name, 'X');
+  assert.equal(accepted(await owner.action('source.create', 'c-noord', {name: 'x'.repeat(120)})).result.source.name.length, 120);
+});
+
+test('deleting a source keeps its leads, notes and conversions, prevents new use and is not reversed by restart', async t => {
+  const env = await fixture({bootstrapToken: '', adminPassword: PASSWORD});
+  t.after(() => env.close());
+  const owner = env.client();
+  accepted(await owner.login());
+  const source = accepted(await owner.action('source.create', 'c-noord', {name: 'Eigen projectbron', url: 'https://source.example/contacten', username: 'eigen-connector'})).result.source;
+  const leadFields = {title: 'Project uit een eigen bron', organization: 'Eigen contactorganisatie', city: 'Haarlem', contact: 'Eigen contact', phone: '+31 20 000 5566', email: 'custom-source-contact@example.test', description: 'Dit project blijft bestaan na het verwijderen van de bron.'};
+  const created = accepted(await owner.action('lead.create', 'c-noord', {...leadFields, source: source.id}));
+  const leadId = created.result.lead?.id || created.result.leadId;
+  assert.equal(created.result.lead.source, source.id);
+  accepted(await owner.action('note.add', 'c-noord', {leadId, text: 'Echte bronhistorie die niet verloren mag gaan'}));
+  accepted(await owner.action('note.add', 'c-delta', {leadId, text: 'Eigen opvolging van een ander bedrijf blijft ook bestaan'}));
+  accepted(await owner.action('call.record', 'c-noord', {leadId}));
+  accepted(await owner.action('workspace.update', 'c-noord', {leadId, field: 'commitment', value: true}));
+  accepted(await owner.action('workspace.update', 'c-noord', {leadId, field: 'calculation', value: true}));
+  const before = databaseSnapshot(env.dataDir);
+  const reportsBefore = reportRows(accepted(await owner.state()).state, {source: source.id});
+  assert.equal(reportsBefore.length, 1);
+  assert.equal(reportsBefore[0].source, source.id);
+  assert.equal(reportsBefore[0].total, 1);
+  assert.equal(reportsBefore[0].contacted, 1);
+  assert.equal(reportsBefore[0].commitments, 1);
+  assert.equal(reportsBefore[0].calculations, 1);
+  assert.equal(reportsBefore[0].conversion, 100);
+  const deleted = accepted(await owner.action('source.delete', 'c-noord', {id: source.id}));
+  const tombstone = deleted.result.source;
+  assert.equal(tombstone.id, source.id);
+  assert.equal(tombstone.name, source.name);
+  assert.equal(tombstone.kind, 'lead');
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.enabled, false);
+  assert.equal(tombstone.url, '');
+  assert.equal(tombstone.username, '');
+  assert.deepEqual(deleted.state.leads, before.state.leads);
+  assert.deepEqual(deleted.state.workspaces, before.state.workspaces);
+  assert.deepEqual(deleted.state.callLog, before.state.callLog);
+  assert.deepEqual(deleted.state.users, before.state.users);
+  assert.deepEqual(deleted.state.companies, before.state.companies);
+  assert.deepEqual(deleted.state.settings, before.state.settings);
+  for (const item of before.state.feed) assert.deepEqual(deleted.state.feed.find(candidate => candidate.id === item.id), item);
+  assert.deepEqual(reportRows(deleted.state, {source: source.id}), reportsBefore);
+  const after = databaseSnapshot(env.dataDir);
+  assert.deepEqual(after.credentials, before.credentials);
+  assert.deepEqual(after.sessions, before.sessions);
+  assert.deepEqual(after.invitations, before.invitations);
+  assert.equal((await owner.action('source.delete', 'c-noord', {id: source.id})).status, 404);
+  assert.equal((await owner.action('source.update', 'c-noord', {id: source.id, name: 'Weer terug', url: '', username: ''})).status, 404);
+  for (const unavailableSource of [source.id, 'outlook', 'source-unknown']) {
+    const snapshot = databaseSnapshot(env.dataDir);
+    assert.equal((await owner.action('lead.create', 'c-noord', {...leadFields, source: unavailableSource})).status, 400);
+    assert.deepEqual(databaseSnapshot(env.dataDir), snapshot);
+  }
+  const outlook = accepted(await owner.action('source.delete', 'c-noord', {id: 'outlook'})).result.source;
+  assert.equal(outlook.id, 'outlook');
+  assert.equal(outlook.deleted, true);
+  assert.equal((await owner.action('source.update', 'c-noord', {id: 'outlook', url: '', username: ''})).status, 404);
+  const legacy = accepted(await owner.action('source.delete', 'c-noord', {id: 'bouw'}));
+  assert.equal(legacy.state.sources.find(candidate => candidate.id === 'bouw').deleted, true);
+  assert.deepEqual(legacy.state.leads, before.state.leads, 'Deleting a built-in source must not delete its existing demo or real leads');
+  assert.equal((await owner.action('lead.create', 'c-noord', {...leadFields, source: 'bouw'})).status, 400);
+  const replacement = accepted(await owner.action('source.create', 'c-noord', {name: '  EIGEN PROJECTBRON  '})).result.source;
+  assert.notEqual(replacement.id, source.id);
+  assert.equal(replacement.deleted === true, false);
+  assert.equal((await owner.action('lead.create', 'c-noord', {...leadFields, source: replacement.id})).status, 200);
+  const beforeRestart = accepted(await owner.state()).state;
+  await env.restart();
+  const reloaded = accepted(await owner.state()).state;
+  assert.deepEqual(reloaded.sources, beforeRestart.sources);
+  for (const id of [source.id, 'bouw', 'outlook']) assert.equal(reloaded.sources.find(candidate => candidate.id === id).deleted, true);
+  assert.deepEqual(reloaded.workspaces['c-noord'][leadId], before.state.workspaces['c-noord'][leadId]);
+  assert.deepEqual(reportRows(reloaded, {source: source.id}), reportsBefore);
 });

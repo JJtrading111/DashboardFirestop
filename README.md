@@ -34,6 +34,12 @@ De upload accepteert PNG, JPEG en WebP tot 5 MB. De browser verkleint de afbeeld
 
 Logo's staan als binaire afbeeldingen in de SQLite-database op het persistente volume. Alleen aangemelde gebruikers van het betreffende bedrijf en de hoofdbeheerder kunnen ze opvragen. De server controleert formaat, afmetingen en bestandsgrootte; afbeeldingen van externe URL's en SVG-bestanden worden niet geaccepteerd.
 
+## Bronnen beheren
+
+De hoofdbeheerder kan bij **Bronnen & koppelingen** bronnen toevoegen, configureren en na bevestiging verwijderen. Geef een naam op en eventueel een bron-URL en gebruikersnaam. Opslaan maakt nog geen verbinding; nieuwe bronnen staan op **Niet gekoppeld**. Wachtwoorden en toegangstokens horen niet in deze velden.
+
+Actieve bronnen verschijnen bij het toevoegen van een lead, in filters en in rapportages en exports. Verwijderen haalt de bron uit het overzicht en uit de keuze voor nieuwe leads. Bestaande leads, notities, belgeschiedenis en conversies blijven aan de oorspronkelijke bron gekoppeld; die bron blijft met de aanduiding **verwijderd** beschikbaar in historische filters. De URL en gebruikersnaam worden bij verwijderen gewist. De toekomstige Outlook-koppeling kan eveneens uit het overzicht worden verwijderd.
+
 ## Railway
 
 De app draait als één Node.js 24-service met de meegeleverde Dockerfile. Mount een persistent Railway-volume op `/data`. De SQLite-database, wachtwoordhashes, sessies en uitnodigingshashes staan op dat volume, buiten de broncode.
