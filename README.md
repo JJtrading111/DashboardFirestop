@@ -72,7 +72,7 @@ Als alternatief zonder `ADMIN_PASSWORD` heeft de eerste activatielink de vorm `A
 
 Gebruik één replica: SQLite en het volume horen bij dezelfde service. Gezondheidscontrole: `/health`.
 
-De aparte worker gebruikt `scraper/Dockerfile`, zonder publiek domein of datavolume. Railway gebruikt rechtstreeks ingestelde service-instellingen (startopdracht `node worker.mjs`, één replica, herstart bij fouten); de oude Config-as-Code-koppeling is leeg. Stel `DASHBOARD_URL` en dezelfde `SCRAPER_WORKER_TOKEN` in. De webservice blijft de enige schrijver van SQLite. Zie de scraperhandleiding voor aanmelding, proef, planning, limieten en intrekken van toegang.
+De aparte worker gebruikt `scraper/Dockerfile`, zonder publiek domein of datavolume. Railway gebruikt rechtstreeks ingestelde service-instellingen (startopdracht `node worker.mjs`, één replica, herstart bij fouten); de oude Config-as-Code-koppeling is leeg en de oude `railway.json` is verwijderd. Stel `DASHBOARD_URL`, dezelfde `SCRAPER_WORKER_TOKEN` en `RAILWAY_DOCKERFILE_PATH=scraper/Dockerfile` in. De webservice blijft de enige schrijver van SQLite. Zie de scraperhandleiding voor aanmelding, proef, planning, limieten en intrekken van toegang.
 
 ## Lokaal ontwikkelen en testen
 
