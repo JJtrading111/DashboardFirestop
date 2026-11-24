@@ -1,6 +1,6 @@
 import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
-import {createBouwberichtenApi,mapProjectToLead} from './bouwberichten-api.mjs';
+import {createBouwberichtenApi,enrichLeadWithPresentation,mapProjectToLead} from './bouwberichten-api.mjs';
 import {loginBouwberichten,sanitizeAuthDiagnostic} from './bouwberichten-auth.mjs';
 
 export class WorkerError extends Error{
@@ -33,7 +33,7 @@ export function createBrokerClient({dashboardUrl,workerToken,fetchImpl=fetch,sle
  }
  const jobPath=id=>'/api/scraper/jobs/'+encodeURIComponent(id);
  return{
-  async claim(){const result=await post('/api/scraper/claim',{}, {retry:false});if(!result||!Object.hasOwn(result,'job'))throw new WorkerError();return result.job;},
+  async claim(){const result=await post('/api/scraper/claim',{leadWorkbook:true}, {retry:false});if(!result||!Object.hasOwn(result,'job'))throw new WorkerError();return result.job;},
   progress:(job,payload)=>post(jobPath(job.id)+'/progress',{leaseToken:job.leaseToken,...payload}),
   batch:(job,batch,items)=>post(jobPath(job.id)+'/batch',{leaseToken:job.leaseToken,batch,items}),
   finish:(job,payload)=>post(jobPath(job.id)+'/finish',{leaseToken:job.leaseToken,...payload}),
@@ -60,21 +60,27 @@ function validateJob(job){
  if(!job||typeof job.id!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(job.id)||typeof job.leaseToken!=='string'||!/^[A-Za-z0-9_-]{43,128}$/.test(job.leaseToken)||!['test','full'].includes(job.mode)||job.limit!==(job.mode==='test'?5:5000)||!Array.isArray(job.filterParameters)||typeof job.filterUrl!=='string'||typeof job.username!=='string'||typeof job.password!=='string')throw new WorkerError('source_error');
 }
 const classify=error=>error?.code==='login_required'||['AUTH_REQUIRED','ACCESS_DENIED'].includes(error?.code)?'login_required':['source_error','INVALID_INPUT','FILTER_MISMATCH','INVALID_RESPONSE'].includes(error?.code)?'source_error':'scrape_error';
+const MAX_BATCH_ITEMS_BYTES=950*1024;
 
-export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,createApi=createBouwberichtenApi,mapLead=mapProjectToLead,sleepImpl=delay,jobTimeoutMs=60*60*1000}={}){
+export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,createApi=createBouwberichtenApi,mapLead=mapProjectToLead,sleepImpl=delay,jobTimeoutMs=(job?.mode==='full'?4:1)*60*60*1000}={}){
  let session;const timeout=AbortSignal.timeout(jobTimeoutMs),combined=AbortSignal.any([signal,timeout].filter(Boolean));
  try{
   validateJob(job);combined.throwIfAborted();
   session=await authenticate({username:job.username,password:job.password,filterUrl:job.filterUrl,signal:combined});
   const api=createApi({authorizedRequest:createPacedRequest(session.authorizedRequest,{signal:combined,sleepImpl}),signal:combined});
   let processed=0,batch=0,pageNumber=0,total=null;const seen=new Set(),organisationCache=new Map(),amountPerPage=20;
+  const workbookCounts={contractorsWithPhone:0,images:0};
   while(total===null||processed<Math.min(total,job.limit)){
    combined.throwIfAborted();const listing=await api.listProjects({filterParameters:job.filterParameters,pageNumber,amountPerPage,signal:combined});
    if(total===null)total=listing.total;
    if(job.mode==='full'&&total>job.limit)throw new WorkerError('source_error');
    // Stable totals and unique identities prevent silently skipping projects on changing pages.
    if(listing.total!==total||!listing.projects.length&&processed<Math.min(total,job.limit))throw new WorkerError('source_error');
-   await broker.progress(job,{processed,total});const items=[];
+   await broker.progress(job,{processed,total});let items=[],itemBytes=0;
+   async function flush(){
+    if(!items.length)return;
+    await broker.batch(job,batch++,items);processed+=items.length;items=[];itemBytes=0;
+   }
    for(const summary of listing.projects){
     if(processed+items.length>=Math.min(total,job.limit))break;
     const identity=String(summary.id);if(seen.has(identity))throw new WorkerError('source_error');seen.add(identity);
@@ -82,13 +88,19 @@ export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,
     const ids=[...new Set((Array.isArray(project.involvements)?project.involvements:[]).map(item=>item?.organisationId).filter(id=>typeof id==='number'&&Number.isSafeInteger(id)&&id>0||typeof id==='string'&&/^\d{1,16}$/.test(id)&&Number(id)>0).map(String))];
     const missing=ids.filter(id=>!organisationCache.has(id));
     if(missing.length){const organisations=await api.getOrganisations(missing,{signal:combined});for(const id of missing)organisationCache.set(id,null);for(const organisation of organisations)organisationCache.set(String(organisation.id),organisation);}
-    items.push(mapLead(project,{organisations:ids.map(id=>organisationCache.get(id)).filter(Boolean)}));
+    const lead=mapLead(project,{organisations:ids.map(id=>organisationCache.get(id)).filter(Boolean),preferredRoles:['Hoofdaannemer'],includeDetails:true});
+    enrichLeadWithPresentation(lead,await session.projectPresentation?.(identity,lead.title));
+    if(lead.projectDetails?.primaryRole?.toLowerCase()==='hoofdaannemer'&&lead.phone)workbookCounts.contractorsWithPhone++;
+    if(lead.projectImage)workbookCounts.images++;
+    const bytes=Buffer.byteLength(JSON.stringify(lead))+1;
+    if(items.length&&itemBytes+bytes>MAX_BATCH_ITEMS_BYTES)await flush();
+    items.push(lead);itemBytes+=bytes;
    }
-   if(items.length){await broker.batch(job,batch++,items);processed+=items.length;}
+   await flush();
    await broker.progress(job,{processed,total});pageNumber++;
   }
   if(!processed)throw new WorkerError('source_error');
-  await broker.finish(job,{processed,total});return{processed,total};
+  await broker.finish(job,{processed,total});return{processed,total,...session.projectPresentation&&{workbookCounts}};
  }catch(error){const code=classify(error),diagnostic=code==='login_required'?sanitizeAuthDiagnostic(error?.diagnostic):undefined;await broker.fail(job,code).catch(()=>{});return{failed:true,code,...diagnostic&&{diagnostic}};}
  finally{await session?.close().catch(()=>{});}
 }
@@ -96,7 +108,10 @@ export async function runJob(job,{broker,signal,authenticate=loginBouwberichten,
 export async function runWorker({config=loadWorkerConfig(),signal,fetchImpl=fetch,sleepImpl=delay,run=runJob,logger=console}={}){
  const broker=createBrokerClient({...config,signal,fetchImpl,sleepImpl});logger.info('Scrapingworker gestart.');
  while(!signal?.aborted){
-  try{const job=await broker.claim();if(job){const result=await run(job,{broker,signal,sleepImpl}),diagnostic=result.failed?sanitizeAuthDiagnostic(result.diagnostic):undefined;logger.info(JSON.stringify({event:result.failed?'job_failed':'job_finished',...result.failed?{code:['login_required','source_error','scrape_error'].includes(result.code)?result.code:'scrape_error',...diagnostic&&{diagnostic}}:{processed:result.processed,total:result.total}}));continue;}}
+  try{const job=await broker.claim();if(job){const result=await run(job,{broker,signal,sleepImpl}),diagnostic=result.failed?sanitizeAuthDiagnostic(result.diagnostic):undefined;
+   const counts=result.workbookCounts;
+   const workbookCounts=counts&&Object.fromEntries(['contractorsWithPhone','images'].filter(key=>Number.isSafeInteger(counts[key])&&counts[key]>=0&&counts[key]<=result.processed).map(key=>[key,counts[key]]));
+   logger.info(JSON.stringify({event:result.failed?'job_failed':'job_finished',...result.failed?{code:['login_required','source_error','scrape_error'].includes(result.code)?result.code:'scrape_error',...diagnostic&&{diagnostic}}:{processed:result.processed,total:result.total,...workbookCounts&&{workbookCounts}}}));continue;}}
   catch(error){if(signal?.aborted)break;logger.error(JSON.stringify({event:'broker_unavailable',status:error?.status??null}));}
   try{await wait(15000,signal,sleepImpl);}catch{break;}
  }

@@ -29,7 +29,7 @@ export async function loginBouwberichten({username,password,filterUrl,signal,chr
  try{normalized=normalizeBouwberichtenFilterUrl(filterUrl).filterUrl;}catch{throw failure('invalid_filter');}
  if(typeof username!=='string'||!username.trim()||typeof password!=='string'||!password||!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>120000||typeof now!=='function')throw failure('invalid_configuration');
  signal?.throwIfAborted();
- let browser,context,page,accessToken='',tokenVersion=0,closed=false,customTemplateSeen=false;
+ let browser,context,page,photoPage,accessToken='',tokenVersion=0,closed=false,customTemplateSeen=false;
  const close=async()=>{if(closed)return;closed=true;accessToken='';signal?.removeEventListener('abort',onAbort);await browser?.close().catch(()=>{});};
  const onAbort=()=>{void close();};
  const visible=async selector=>{try{return await page.locator(selector).first().isVisible();}catch{return false;}};
@@ -93,6 +93,46 @@ export async function loginBouwberichten({username,password,filterUrl,signal,chr
    }
    return response;
   }
-  return{authorizedRequest,close};
+  async function projectPresentation(projectId,title){
+   if(!/^\d{1,16}$/.test(String(projectId))||!title||closed)return;
+   const url=PORTAL_ORIGIN+'/projecten/'+projectId;
+   let result;
+   try{
+    photoPage??=await context.newPage();
+    await photoPage.goto(url,{waitUntil:'domcontentloaded',timeout:6000});
+    if(photoPage.url()!==url)return;
+    const main=photoPage.locator('#main');
+    await main.getByRole('heading',{name:title,exact:true}).waitFor({state:'visible',timeout:3000});
+    result=await main.evaluate(root=>{
+     const terms=[...root.querySelectorAll('dt')].filter(term=>term.getClientRects().length);
+     const info={};
+     for(const term of terms){
+      const label=term.textContent.trim().replace(/:$/,'');
+      if(!['Plan','Deelplan','Start','Oplevering','Oppervlakte','Bouwlagen van - t/m','Duurzame eigenschappen','Project website'].includes(label))continue;
+      const value=term.nextElementSibling;
+      if(value?.tagName==='DD')info[label]=label==='Project website'?value.querySelector('a[href]')?.href:value.textContent.trim();
+     }
+     const contractors=terms.filter(term=>term.textContent.trim()==='Hoofdaannemer');
+     const term=contractors.length===1?contractors[0]:null,card=term?.closest('dl');
+     const value=term?.nextElementSibling,name=value?.tagName==='DD'?value.textContent.trim():'';
+     const byHref=prefix=>card?.querySelector(`a[href^="${prefix}"]`)?.textContent?.trim();
+     const phone=byHref('tel:'),email=byHref('mailto:');
+     const web=[...card?.querySelectorAll('dt')??[]].find(label=>label.textContent.trim()==='Website');
+     const mainContractor=name?{name,phone,email,website:web?.nextElementSibling?.querySelector('a[href]')?.href}:undefined;
+     return{info,mainContractor};
+    },undefined,{timeout:1500});
+    const image=main.getByRole('img',{name:title,exact:true}).filter({visible:true}).first();
+    await image.waitFor({state:'visible',timeout:3000});
+    const loaded=await image.evaluate(async element=>{
+     await Promise.race([element.decode().catch(()=>{}),new Promise(resolve=>setTimeout(resolve,1200))]);
+     return element.naturalWidth>0&&element.naturalHeight>0;
+    },undefined,{timeout:1500});
+    if(!loaded)return result;
+    const bytes=await image.screenshot({type:'jpeg',quality:70,timeout:2500,animations:'disabled',scale:'css'});
+    if(bytes.length<=256*1024)result.projectImage='data:image/jpeg;base64,'+bytes.toString('base64');
+   }catch{signal?.throwIfAborted();}
+   return result;
+  }
+  return{authorizedRequest,projectPresentation,close};
  }catch(error){await close();if(signal?.aborted)throw signal.reason;throw error instanceof SourceLoginError?error:failure(stage==='browser_start'?'browser_start_failed':stage==='portal_navigation'?'navigation_failed':['email_form','email_submitted','password_form','password_submitted'].includes(stage)?'control_interaction_failed':'unexpected_error');}
 }

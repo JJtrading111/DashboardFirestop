@@ -109,7 +109,46 @@ function matchingInvolvement(project,{organisationId,preferredRoles=[]}){
  return unambiguousInvolvement(involvements.filter(item=>item.organisationId!=null));
 }
 
-export function mapProjectToLead(project,{organisations=[],organisationId,preferredRoles=[]}={}){
+function website(value){
+ const address=plain(value,2000);if(!address)return'';
+ try{const url=new URL(/^[a-z][a-z\d+.-]*:/i.test(address)?address:'https://'+address);return ['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.hostname.includes('.')?url.href:'';}catch{return'';}
+}
+const sourceDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value)&&Number.isFinite(Date.parse(value))?new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Amsterdam',dateStyle:'short'}).format(new Date(value)):'';
+
+function partyDetails(involvement,organisation){
+ const party={name:plain(organisation?.name??involvement.organisationName,120),role:plain(involvement.role,100)};
+ const phone=typeof organisation?.phoneNumber==='string'?organisation.phoneNumber.trim().replace(/\s+/g,' '):'';
+ const email=typeof organisation?.email==='string'?organisation.email.trim().toLowerCase():'';
+ if(/^[+\d ()-]{6,30}$/.test(phone))party.phone=phone;
+ if(email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))party.email=email;
+ const url=website(organisation?.website??organisation?.websiteUrl);if(url)party.website=url;
+ return party;
+}
+
+function projectDetails(project,item,involvement,organisation,organisations){
+ const address=project.address??{},layers=project.buildingLayers;
+ const layerCount=Number.isFinite(layers)?String(layers):[layers?.min,layers?.max].filter(Number.isFinite).filter((value,index,values)=>values.indexOf(value)===index).join('–');
+ const parties=[];
+ for(const entry of Array.isArray(project.involvements)?project.involvements.filter(object):[]){
+  if(involvement&&String(entry.organisationId)===String(involvement.organisationId))continue;
+  const party=partyDetails(entry,organisations.find(record=>String(record?.id)===String(entry.organisationId)));
+  if(party.name&&!parties.some(row=>row.name===party.name&&row.role===party.role))parties.push(party);
+ }
+ const selected=involvement?partyDetails(involvement,organisation):{};
+ return {
+  scheduleStart:sourceDate(project.startedAt),scheduleEnd:sourceDate(project.deliveredAt),
+  plan:plain(project.planName??(typeof project.plan==='string'?project.plan:project.plan?.name),150),
+  subplan:plain(project.subPlanName??project.subPlan??project.subplan??project.plan?.subPlan,150),
+  address:[plain(address.street??address.streetName,120),plain(address.zipCode,20),plain(address.city,100)].filter(Boolean).join(', '),
+  scope:item.description?.match(/\b\d{1,4}\s+woningen\b/i)?.[0]??'',
+  surface:Number.isFinite(project.surface)&&project.surface>0?new Intl.NumberFormat('nl-NL').format(project.surface)+' m²':'',
+  layers:layerCount,website:website(project.projectWebsite??project.website),
+  sustainability:Array.isArray(project.sustainableProperties)?project.sustainableProperties.map(value=>plain(value,100)).filter(Boolean).slice(0,8).join(', '):'',
+  primaryRole:selected.role??'',primaryWebsite:selected.website??'',parties:parties.slice(0,16)
+ };
+}
+
+export function mapProjectToLead(project,{organisations=[],organisationId,preferredRoles=[],includeDetails=false}={}){
  if(!object(project)||!Array.isArray(organisations)||!Array.isArray(preferredRoles))invalid('Het project of de organisatiekeuze is ongeldig.');const externalId=projectId(project.id),title=plain(project.name,150).replace(/\s+/g,' ');if(!title)invalid('Het bronproject heeft geen projectnaam.');
  const item={externalId,title,sourceUrl:'https://portal.bouwberichten.nl/projecten/'+externalId};
  for(const [field,value,max]of [['city',project.address?.city,100],['description',project.description,3000],['phase',project.constructionPhase,120]]){const normalized=plain(value,max);if(normalized)item[field]=normalized;}
@@ -119,5 +158,38 @@ export function mapProjectToLead(project,{organisations=[],organisationId,prefer
  const involvement=matchingInvolvement(project,{organisationId,preferredRoles}),organisation=involvement&&organisations.find(record=>object(record)&&String(record.id)===String(involvement.organisationId));
  const organization=plain(organisation?.name??involvement?.organisationName,120);if(organization)item.organization=organization;
  if(organisation){const phone=typeof organisation.phoneNumber==='string'?organisation.phoneNumber.trim().replace(/\s+/g,' '):'',email=typeof organisation.email==='string'?organisation.email.trim().toLowerCase():'';if(/^[+\d ()-]{6,30}$/.test(phone))item.phone=phone;if(email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))item.email=email;const contact=Array.isArray(organisation.contacts)?organisation.contacts.find(record=>object(record)&&involvement.contactId!=null&&String(record.id)===String(involvement.contactId)):undefined;if(contact){const name=[contact.initials,contact.firstName,contact.middleName,contact.lastName].filter(value=>typeof value==='string'&&value.trim()).join(' ');if(name)item.contact=plain(name,100);}}
+ if(includeDetails){
+  item.projectDetails=projectDetails(project,item,involvement,organisation,organisations);
+  // A single source contact replaces earlier imported contact fields together.
+  if(organisation&&item.projectDetails.primaryRole.toLowerCase()==='hoofdaannemer')for(const key of ['phone','email','contact'])item[key]??='';
+ }
  return item;
+}
+
+export function enrichLeadWithPresentation(lead,presentation){
+ if(!presentation)return;
+ if(presentation.projectImage)lead.projectImage=presentation.projectImage;
+ const details=lead.projectDetails;
+ if(!details)return;
+ const info=presentation.info??{};
+ for(const [key,label,max] of [['plan','Plan',150],['subplan','Deelplan',150],['surface','Oppervlakte',120],['layers','Bouwlagen van - t/m',40],['sustainability','Duurzame eigenschappen',850]]){
+  details[key]||=plain(info[label],max);
+ }
+ for(const [key,label] of [['scheduleStart','Start'],['scheduleEnd','Oplevering']]){
+  const match=/^(\d{2})-(\d{2})-(\d{4})$/.exec(info[label]??'');if(!match||details[key])continue;
+  const date=`${match[3]}-${match[2]}-${match[1]}`;
+  if(Number.isFinite(Date.parse(date))&&new Date(date).toISOString().slice(0,10)===date)details[key]=date;
+ }
+ details.website||=website(info['Project website']);
+ const card=presentation.mainContractor,name=plain(card?.name,120);
+ if(!name||details.primaryRole.toLowerCase()==='hoofdaannemer'&&lead.organization?.toLowerCase()!==name.toLowerCase())return;
+ if(details.primaryRole.toLowerCase()!=='hoofdaannemer'){
+  Object.assign(lead,{organization:name,phone:'',email:'',contact:''});
+  details.primaryRole='Hoofdaannemer';details.primaryWebsite='';
+ }
+ const phone=plain(card.phone,30),email=plain(card.email,254).toLowerCase();
+ if(!lead.phone&&/^[+\d ()-]{6,30}$/.test(phone))lead.phone=phone;
+ if(!lead.email&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))lead.email=email;
+ details.primaryWebsite||=website(card.website);
+ details.parties=details.parties.filter(party=>party.name.toLowerCase()!==name.toLowerCase());
 }

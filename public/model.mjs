@@ -2,6 +2,7 @@ const HOUR = 3600000;
 const roles = ['hoofdbeheerder', 'bedrijfsbeheerder', 'verkoper'];
 const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
 const iso = value => new Date(value).toISOString();
+export const callOutcomeNames = Object.freeze({ reached: 'Gesproken', unanswered: 'Geen gehoor', voicemail: 'Voicemail ingesproken' });
 const dayInAmsterdam = value => {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return null;

@@ -5,7 +5,7 @@ import {promisify} from 'node:util';
 import {mkdirSync,readFileSync,existsSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {createDemoState,getWorkspace,recordCall,transferUser} from './public/model.mjs';
+import {callOutcomeNames,createDemoState,getWorkspace,recordCall,transferUser} from './public/model.mjs';
 import {normalizeBouwberichtenFilterUrl} from './public/bouwberichten-filters.mjs';
 import {createScraperBroker} from './scraper/broker.mjs';
 
@@ -26,6 +26,31 @@ const isLeadSource=source=>!!source&&!source.deleted&&source.id!=='outlook'&&(!s
 const sourceProvider=source=>['generic','bouwberichten'].includes(source?.provider)?source.provider:source?.id==='bouw'?'bouwberichten':'generic';
 const canonicalJson=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const importText=(value,label,max)=>value===undefined||value===null?'':text(value,label,max,0);
+function projectWebsite(value){
+ const address=importText(value,'Project- of organisatiesite',2000);if(!address)return'';
+ try{const url=new URL(address);if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.href.length>2000)throw Error();return url.href;}catch{fail(400,'Gebruik een geldige http(s)-website.');}
+}
+function normalizeProjectDetails(value){
+ if(value==null)return null;
+ if(typeof value!=='object'||Array.isArray(value))fail(400,'De projectdetails moeten een object zijn.');
+ const fields={plan:150,subplan:150,address:256,scope:120,surface:120,layers:40,sustainability:850,primaryRole:100};
+ const details=Object.fromEntries(Object.entries(fields).map(([key,max])=>[key,importText(value[key],'Projectdetails',max)]));
+ for(const key of ['scheduleStart','scheduleEnd']){
+  const date=importText(value[key],'Projectplanning',10);
+  if(date&&(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||iso(Date.parse(date)).slice(0,10)!==date))fail(400,'Gebruik een geldige projectdatum.');
+  details[key]=date;
+ }
+ details.website=projectWebsite(value.website);details.primaryWebsite=projectWebsite(value.primaryWebsite);
+ const parties=value.parties??[];
+ if(!Array.isArray(parties)||parties.length>16)fail(400,'Gebruik maximaal 16 betrokken organisaties.');
+ details.parties=parties.map(party=>{
+  if(!party||typeof party!=='object'||Array.isArray(party))fail(400,'De betrokken organisatie is ongeldig.');
+  const phone=importText(party.phone,'Telefoonnummer',30),email=importText(party.email,'E-mailadres',254);
+  if(phone&&!/^[+\d ()-]{6,30}$/.test(phone))fail(400,'Vul een geldig telefoonnummer in.');
+  return{name:text(party.name,'Organisatie',120),role:importText(party.role,'Rol',100),phone,email:email?emailValue(email):'',website:projectWebsite(party.website)};
+ });
+ return details;
+}
 function normalizeImportItem(item){
  if(!item||typeof item!=='object'||Array.isArray(item))fail(400,'Iedere importvermelding moet een object zijn.');
  let sourceUrl=importText(item.sourceUrl,'Bronverwijzing',2000);
@@ -35,7 +60,9 @@ function normalizeImportItem(item){
  if(fields.email)fields.email=emailValue(fields.email);
  if(fields.phone&&!/^[+\d ()-]{6,30}$/.test(fields.phone))fail(400,'Vul een geldig telefoonnummer in.');
  if(fields.sourceUpdatedAt){if(!/^\d{4}-\d{2}-\d{2}T/.test(fields.sourceUpdatedAt)||!Number.isFinite(Date.parse(fields.sourceUpdatedAt)))fail(400,'Gebruik een geldige ISO-datum met tijd voor de brondatum.');fields.sourceUpdatedAt=iso(Date.parse(fields.sourceUpdatedAt));}
- return{externalId,fields,providedFields:Object.keys(fields).filter(field=>Object.prototype.hasOwnProperty.call(item,field))};
+ if(Object.hasOwn(item,'projectDetails'))fields.projectDetails=normalizeProjectDetails(item.projectDetails);
+ const image=item.projectImage?decodeImage(item.projectImage,'projectimpressie'):null;
+ return{externalId,fields,image,providedFields:Object.keys(fields).filter(field=>Object.hasOwn(item,field))};
 }
 const MAX_LOGO_BYTES=256*1024,MAX_LOGO_DIMENSION=2048;
 function logoDimensions(bytes,mime){
@@ -66,15 +93,17 @@ function logoDimensions(bytes,mime){
  }
  return null;
 }
-function decodeCompanyLogo(value){
- if(typeof value!=='string')fail(400,'Kies een geldig PNG-, JPEG- of WebP-logo.');
- if(value.length>Math.ceil(MAX_LOGO_BYTES/3)*4+64)fail(413,'Het logo is te groot. Gebruik een afbeelding van maximaal 256 kB.');
+function decodeImage(value,label='logo'){
+ const invalid=`Kies een ${label==='logo'?'geldig':'geldige'} PNG-, JPEG- of WebP-${label}.`;
+ const tooBig=`Het bestand is te groot. Gebruik een afbeelding van maximaal 256 kB.`;
+ if(typeof value!=='string')fail(400,invalid);
+ if(value.length>Math.ceil(MAX_LOGO_BYTES/3)*4+64)fail(413,tooBig);
  const match=/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
- if(!match||match[2].length%4!==0)fail(400,'Kies een geldig PNG-, JPEG- of WebP-logo.');
- const bytes=Buffer.from(match[2],'base64');if(bytes.length>MAX_LOGO_BYTES)fail(413,'Het logo is te groot. Gebruik een afbeelding van maximaal 256 kB.');
- if(bytes.toString('base64')!==match[2])fail(400,'Het logo bevat ongeldige afbeeldingsgegevens.');
+ if(!match||match[2].length%4!==0)fail(400,invalid);
+ const bytes=Buffer.from(match[2],'base64');if(bytes.length>MAX_LOGO_BYTES)fail(413,tooBig);
+ if(bytes.toString('base64')!==match[2])fail(400,'Het bestand bevat ongeldige afbeeldingsgegevens.');
  const dimensions=logoDimensions(bytes,match[1]);
- if(!dimensions||dimensions.width<1||dimensions.height<1||dimensions.width>MAX_LOGO_DIMENSION||dimensions.height>MAX_LOGO_DIMENSION)fail(400,'Gebruik een geldig logo van maximaal 2048 bij 2048 pixels.');
+ if(!dimensions||dimensions.width<1||dimensions.height<1||dimensions.width>MAX_LOGO_DIMENSION||dimensions.height>MAX_LOGO_DIMENSION)fail(400,'Gebruik een geldige afbeelding van maximaal 2048 bij 2048 pixels.');
  return{mime:match[1],bytes};
 }
 async function passwordHash(password){if(typeof password!=='string'||password.length<12||password.length>256)fail(400,'Gebruik een wachtwoord van minimaal 12 en maximaal 256 tekens.');const salt=randomBytes(16).toString('hex');const hash=await scrypt(password,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024});return `${salt}:${Buffer.from(hash).toString('hex')}`;}
@@ -103,6 +132,7 @@ export function createApp(options={}){
  CREATE TABLE IF NOT EXISTS demo_lead_archives(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,actor_id TEXT NOT NULL,json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS app_migrations(id TEXT PRIMARY KEY,applied_at TEXT NOT NULL,result_json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS company_logos(company_id TEXT PRIMARY KEY,mime TEXT NOT NULL,bytes BLOB NOT NULL,version TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS lead_images(lead_id TEXT PRIMARY KEY,mime TEXT NOT NULL,bytes BLOB NOT NULL,version TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS source_import_credentials(source_id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,enabled INTEGER NOT NULL,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS source_import_status(source_id TEXT PRIMARY KEY,last_import_at TEXT,counts_json TEXT,last_error TEXT);
  CREATE TABLE IF NOT EXISTS source_items(source_id TEXT NOT NULL,external_id TEXT NOT NULL,lead_id TEXT NOT NULL,imported_json TEXT NOT NULL,PRIMARY KEY(source_id,external_id));
@@ -258,17 +288,32 @@ export function createApp(options={}){
      if(!existing&&identity){existing=db.prepare('SELECT * FROM source_items WHERE lead_id=? ORDER BY rowid LIMIT 1').get(identity.lead_id);if(!existing)fail(409,'Een gedeelde bronvermelding heeft geen importsnapshot.');}
     }
     let lead;
+    const applyImage=()=>{
+     if(!item.image)return false;
+     const {mime,bytes}=item.image,version=digest(bytes);
+     const url='/api/lead-images/'+encodeURIComponent(lead.id)+'?v='+version;
+     if(lead.projectImageUrl===url)return false;
+     db.prepare('INSERT INTO lead_images(lead_id,mime,bytes,version) VALUES(?,?,?,?) ON CONFLICT(lead_id) DO UPDATE SET mime=excluded.mime,bytes=excluded.bytes,version=excluded.version').run(lead.id,mime,bytes,version);
+     lead.projectImageUrl=url;return true;
+    };
     if(existing){
      lead=s.leads.find(record=>record.id===existing.lead_id);if(!lead)fail(409,'Een bronvermelding verwijst naar een ontbrekend project.');
      let relinked=false;if(shared){const sourceIds=[...new Set([lead.source,...(Array.isArray(lead.sourceIds)?lead.sourceIds:[])].filter(value=>typeof value==='string'&&value))];relinked=!sourceIds.includes(source.id);if(relinked)sourceIds.push(source.id);lead.sourceIds=sourceIds;}
      const previous=JSON.parse(existing.imported_json),stale=previous.sourceUpdatedAt&&item.fields.sourceUpdatedAt&&Date.parse(item.fields.sourceUpdatedAt)<Date.parse(previous.sourceUpdatedAt),incoming={...previous};let changed=false;
-     if(!stale){for(const field of item.providedFields)incoming[field]=item.fields[field];for(const [field,value]of Object.entries(incoming)){if(lead[field]===previous[field]||(previous[field]===undefined&&!lead[field])){if(lead[field]!==value){lead[field]=value;changed=true;}}}}
+     if(!stale){
+      for(const field of item.providedFields)incoming[field]=item.fields[field];
+      for(const [field,value]of Object.entries(incoming)){
+       const equal=(a,b)=>field==='projectDetails'?canonicalJson(a)===canonicalJson(b):a===b;
+       if((equal(lead[field],previous[field])||(previous[field]===undefined&&!lead[field]))&&!equal(lead[field],value)){lead[field]=value;changed=true;}
+      }
+      changed=applyImage()||changed;
+     }
      const snapshot=JSON.stringify(incoming);if(!own)db.prepare('INSERT INTO source_items(source_id,external_id,lead_id,imported_json) VALUES(?,?,?,?)').run(source.id,item.externalId,lead.id,snapshot);
      // Shared snapshots distinguish portal changes from hand-edited lead fields across filters.
      if(!stale){if(shared)db.prepare('UPDATE source_items SET imported_json=? WHERE lead_id=?').run(snapshot,lead.id);else db.prepare('UPDATE source_items SET imported_json=? WHERE source_id=? AND external_id=?').run(snapshot,source.id,item.externalId);}
      if(changed||relinked){lead.updatedAt=now;counts.updated++;addFeed(s,actor,null,`${changed?'Projectgegevens bijgewerkt':'Filterbron gekoppeld'}: ${lead.title}`,lead.id);}else counts.unchanged++;
     }else{
-     lead={id:id('lead'),source:source.id,sourceIds:[source.id],...item.fields,createdAt:now,updatedAt:now,tags:['Geïmporteerd'],demo:false,imported:true,importedAt:now,importExternalId:item.externalId};s.leads.unshift(lead);counts.created++;
+     lead={id:id('lead'),source:source.id,sourceIds:[source.id],...item.fields,createdAt:now,updatedAt:now,tags:['Geïmporteerd'],demo:false,imported:true,importedAt:now,importExternalId:item.externalId};applyImage();s.leads.unshift(lead);counts.created++;
      db.prepare('INSERT INTO source_items(source_id,external_id,lead_id,imported_json) VALUES(?,?,?,?)').run(source.id,item.externalId,lead.id,JSON.stringify(item.fields));addFeed(s,actor,null,`Nieuwe centrale lead: ${lead.title}`,lead.id,'new');
     }
     if(shared&&!identity)db.prepare('INSERT INTO provider_items(provider,external_id,lead_id) VALUES(?,?,?)').run('bouwberichten',item.externalId,lead.id);
@@ -294,8 +339,35 @@ export function createApp(options={}){
    }
    case'workspace.update':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');w[field]=field==='ownerId'?(p.value||null):p.value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);break;}
    case'note.add':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id);w.notes.push({id:id('note'),text:text(p.text,'Notitie',4000),authorId:actor.id,authorName:actor.name,createdAt:iso(Date.now())});w.ownerId??=actor.companyId===cid?actor.id:null;addFeed(s,actor,cid,`Gespreksnotitie toegevoegd: ${lead.title}`,lead.id);break;}
-   case'call.record':{requireLead(s,p.leadId);const workspace=getWorkspace(s,cid,p.leadId),previousOwner=workspace.ownerId;try{recordCall(s,p.leadId,cid,actor.id);}catch(error){fail(409,error.message);}if(!previousOwner&&actor.companyId!==cid)workspace.ownerId=null;break;}
-   case'callback.add':{const lead=requireLead(s,p.leadId),assignee=requireMember(s,p.assigneeId,cid),due=Date.parse(p.dueAt);if(!Number.isFinite(due)||due<Date.now()-365*DAY||due>Date.now()+3650*DAY)fail(400,'Kies een geldige terugbeldatum.');const cb={id:id('callback'),dueAt:iso(due),creatorId:actor.id,creatorName:actor.name,assigneeId:assignee.id,done:false,notified:false};getWorkspace(s,cid,lead.id).callbacks.push(cb);addFeed(s,actor,cid,`Terugbelafspraak voor ${assignee.name}: ${lead.title}`,lead.id,'followup');result={callback:cb};break;}
+   case'call.record':{
+    requireLead(s,p.leadId);const workspace=getWorkspace(s,cid,p.leadId),previousOwner=workspace.ownerId;
+    const hasOutcome=p.outcome!==undefined;
+    if(hasOutcome&&(typeof p.outcome!=='string'||!Object.hasOwn(callOutcomeNames,p.outcome)))fail(400,'Kies een geldige gespreksuitkomst.');
+    if(p.callId!==undefined&&!hasOutcome)fail(400,'Kies een gespreksuitkomst.');
+    const person=hasOutcome?importText(p.person,'Gesproken met',100):'',detail=hasOutcome?importText(p.detail,'Toelichting',1000):'';
+    let call;
+    if(p.callId!==undefined){
+     call=workspace.calls.find(entry=>entry.id===p.callId&&entry.userId===actor.id);
+     if(!call||call.outcome)fail(409,'Dit belmoment is niet meer beschikbaar voor een gespreksuitkomst.');
+    }else{
+     try{recordCall(s,p.leadId,cid,actor.id);}catch(error){fail(409,error.message);}
+     if(!previousOwner&&actor.companyId!==cid)workspace.ownerId=null;
+     call=workspace.calls.at(-1);
+    }
+    if(hasOutcome){Object.assign(call,{outcome:p.outcome,person,detail});if(p.outcome==='reached'&&person)workspace.lastContactPerson=person;}
+    result={callId:call.id};break;
+   }
+   case'callback.add':case'callback.update':{
+    const lead=requireLead(s,p.leadId),assignee=requireMember(s,p.assigneeId,cid),due=Date.parse(p.dueAt);
+    if(!Number.isFinite(due)||due<Date.now()-365*DAY||due>Date.now()+3650*DAY)fail(400,'Kies een geldige terugbeldatum.');
+    const description=importText(p.description,'Onderwerp',160),callbacks=getWorkspace(s,cid,lead.id).callbacks,update=type==='callback.update';
+    const callback=update?callbacks.find(entry=>entry.id===p.callbackId&&!entry.done):{id:id('callback'),creatorId:actor.id,creatorName:actor.name,done:false};
+    if(!callback)fail(404,'Deze open terugbelafspraak bestaat niet.');
+    Object.assign(callback,{dueAt:iso(due),assigneeId:assignee.id,notified:false,...description&&{description}});
+    if(!description)delete callback.description;
+    if(!update)callbacks.push(callback);
+    addFeed(s,actor,cid,`${update?'Terugbelafspraak gewijzigd':'Terugbelafspraak'} voor ${assignee.name}: ${lead.title}`,lead.id,'followup');result={callback};break;
+   }
    case'callback.complete':{const lead=requireLead(s,p.leadId),cb=getWorkspace(s,cid,lead.id).callbacks.find(c=>c.id===p.callbackId);if(!cb)fail(404,'Deze terugbelafspraak bestaat niet.');cb.done=true;addFeed(s,actor,cid,`Terugbelafspraak afgehandeld: ${lead.title}`,lead.id,'followup');break;}
    case'lead.create':{const source=p.source;if(!s.sources.some(item=>item.id===source&&!item.deleted&&item.id!=='outlook'&&(!item.kind||item.kind==='lead')))fail(400,'Kies een geldige broncategorie.');const now=iso(Date.now()),lead={id:id('lead'),title:text(p.title,'Projectnaam',150),organization:text(p.organization,'Organisatie',120),city:text(p.city,'Plaats',100),source,contact:text(p.contact,'Contactpersoon',100),phone:text(p.phone,'Telefoonnummer',30),email:emailValue(p.email),description:text(p.description,'Projectomschrijving',3000),phase:'Oriëntatie',budget:'Nog niet bekend',createdAt:now,updatedAt:now,tags:['Handmatig toegevoegd'],demo:false};if(!/^[+\d ()-]{6,30}$/.test(lead.phone))fail(400,'Vul een geldig telefoonnummer in.');s.leads.unshift(lead);const w=getWorkspace(s,cid,lead.id);w.ownerId=actor.companyId===cid?actor.id:null;if(p.status){if(!company.columns.some(c=>c.id===p.status))fail(400,'Kies een geldige Kanban-status.');w.status=p.status;}s.feed.unshift({id:id('feed'),companyId:null,leadId:lead.id,type:'new',text:`Nieuwe centrale lead: ${lead.title}`,authorName:'Handmatig toegevoegd',at:now});result={lead,leadId:lead.id};break;}
    case'columns.update':{requireManager(actor,cid);if(!Array.isArray(p.columns)||p.columns.length!==company.columns.length||p.columns.length>30)fail(400,'Behoud de bestaande kolommen.');const next=p.columns.map(c=>({id:c.id,name:text(c.name,'Kolomnaam',35)}));if(next.some(c=>!company.columns.some(old=>old.id===c.id))||new Set(next.map(c=>c.id)).size!==next.length)fail(400,'De kolomindeling is ongeldig.');if(p.newColumn){if(next.length>=30)fail(400,'Gebruik maximaal 30 kolommen.');next.push({id:id('col'),name:text(p.newColumn,'Nieuwe kolom',35)});}if(new Set(next.map(c=>c.name.toLowerCase())).size!==next.length)fail(400,'Gebruik verschillende kolomnamen.');company.columns=next;addFeed(s,actor,cid,'Kanban-kolommen bijgewerkt');break;}
@@ -304,7 +376,7 @@ export function createApp(options={}){
     const targetId=text(p.companyId,'Bedrijf',100);requireManager(actor,targetId);const target=requireCompany(s,targetId),name=text(p.name,'Bedrijfsnaam',120);
     if(s.companies.some(c=>c.id!==targetId&&c.name.toLowerCase()===name.toLowerCase()))fail(409,'Dit bedrijf bestaat al.');
     const changesLogo=Object.prototype.hasOwnProperty.call(p,'logoDataUrl');let logo;
-    if(changesLogo&&p.logoDataUrl!==null&&p.logoDataUrl!=='')logo=decodeCompanyLogo(p.logoDataUrl);
+    if(changesLogo&&p.logoDataUrl!==null&&p.logoDataUrl!=='')logo=decodeImage(p.logoDataUrl);
     target.name=name;target.initials=name.split(/\s+/).map(word=>Array.from(word)[0]).slice(0,2).join('').toUpperCase();
     if(changesLogo){
      if(logo){const version=randomUUID();db.prepare('INSERT INTO company_logos(company_id,mime,bytes,version) VALUES(?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET mime=excluded.mime,bytes=excluded.bytes,version=excluded.version').run(targetId,logo.mime,logo.bytes,version);target.logoVersion=version;target.logoUrl='/api/company-logos/'+encodeURIComponent(targetId)+'?v='+version;}
@@ -341,7 +413,7 @@ export function createApp(options={}){
    headers(res,true);const ip=req.socket.remoteAddress||'unknown';
    if(url.pathname.startsWith('/api/scraper/')){
     if(req.method!=='POST')fail(405,'Deze methode is niet toegestaan.');rate(`scraper-auth:${ip}`,300,60000);scraperBroker.authorizeWorker(req);
-    const p=await body(req,1024*1024);if(url.pathname==='/api/scraper/claim')return json(res,200,scraperBroker.claim());
+    const p=await body(req,1024*1024);if(url.pathname==='/api/scraper/claim')return json(res,200,scraperBroker.claim(p));
     const route=/^\/api\/scraper\/jobs\/(scrape-[0-9a-f-]{36})\/(progress|batch|finish|fail)$/.exec(url.pathname);
     if(!route)fail(404,'Deze scraperfunctie bestaat niet.');return json(res,200,scraperBroker.report(route[1],route[2],p));
    }
@@ -352,6 +424,14 @@ export function createApp(options={}){
     try{const p=await body(req,1024*1024);return json(res,200,importBatch(auth,p));}catch(error){try{importFailure(sourceId,error);}catch{console.error('Import status could not be recorded.');}throw error;}
    }
    if(req.method==='GET'&&url.pathname==='/api/session'){const session=cookieSession(req);return json(res,200,session?sessionBody(session):{authenticated:false});}
+   const leadImageRoute=/^\/api\/lead-images\/(lead-[0-9a-f-]{36})$/.exec(url.pathname);
+   if(leadImageRoute&&['GET','HEAD'].includes(req.method)){
+    authorized(req);const image=db.prepare('SELECT mime,bytes,version FROM lead_images WHERE lead_id=?').get(leadImageRoute[1]);
+    if(!image||url.searchParams.get('v')!==image.version)fail(404,'Deze projectimpressie bestaat niet.');
+    const bytes=Buffer.from(image.bytes);
+    res.writeHead(200,{'Content-Type':image.mime,'Content-Length':bytes.length,'Cache-Control':'private, no-store'});
+    res.end(req.method==='HEAD'?undefined:bytes);return;
+   }
    if(['GET','HEAD'].includes(req.method)&&url.pathname.startsWith('/api/company-logos/')){
     const session=authorized(req);let companyId;try{companyId=decodeURIComponent(url.pathname.slice('/api/company-logos/'.length));}catch{fail(404,'Dit logo bestaat niet.');}
     if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(companyId))fail(404,'Dit logo bestaat niet.');

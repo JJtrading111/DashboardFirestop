@@ -193,3 +193,59 @@
 .scraper-counts{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;line-height:1.7;color:#4d6683}.scraper-counts strong{color:#244873}
 .scraper-error{padding:12px 14px;border:1px solid #edc9c4;background:#fff3f1;color:#963e34;border-radius:8px;font-size:14px;line-height:1.6;overflow-wrap:anywhere;margin:15px 0 0}
 @media(max-width:500px){#source-scraper-form{padding:13px}#source-scraper-form .password-field{gap:6px}#source-scraper-form .password-toggle{min-width:76px;padding:10px 9px}.scraper-run-actions .button{width:100%}.scraper-last-run dl{grid-template-columns:85px minmax(0,1fr);gap:8px}.scraper-status-heading{align-items:flex-start}}
+
+.detail-drawer.workbook-drawer{width:min(1280px,calc(100vw - 40px))}
+.workbook-drawer .workbook-header{background:#102f3a;color:#fff;padding:16px 22px;border-bottom:3px solid #79b9a2}
+.workbook-header .workbook-heading{display:block;min-width:0}
+.workbook-heading h2{margin:5px 0 2px;color:#fff;overflow-wrap:anywhere}
+.workbook-heading .muted{margin:0;color:#dae9e8}
+.workbook-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.workbook-header>.button{align-self:center}
+.detail-drawer .detail-body.workbook-columns{display:grid;grid-template-columns:1fr .86fr 1.13fr;padding:0}
+.workbook-column{padding:18px 21px;min-width:0;overflow-wrap:anywhere}
+.workbook-column+.workbook-column{border-left:1px solid #d4e1df}
+.workbook-column>h3{margin:0 0 12px;color:#183039;font-size:18px;letter-spacing:-.02em}
+.workbook-followup{background:#f8faf9}
+.workbook-photo{display:block;position:relative;width:100%;padding:0;border:0;border-radius:8px;overflow:hidden;background:#e9efed;color:white;cursor:zoom-in}
+.workbook-photo img{display:block;width:100%;height:clamp(135px,15vw,218px);object-fit:cover}
+.workbook-photo span{position:absolute;bottom:8px;right:8px;padding:4px 8px;background:#102f3aeb;border-radius:5px;font-size:12px}
+.workbook-photo-large{display:block;width:100%;max-height:70vh;object-fit:contain;border-radius:8px}
+.workbook-metrics{display:grid;grid-template-columns:1fr 1fr;gap:0 8px;margin:14px 0;border-block:1px solid #d4e1df}
+.workbook-metrics>div{padding:7px 0}
+.workbook-metrics>div:nth-child(n+3){border-top:1px solid #d4e1df}
+.workbook-metrics dt,.workbook-party small{color:#51656c;font-size:13px}
+.workbook-metrics dd{margin:0;font-weight:700}
+.workbook-description{margin:12px 0;white-space:pre-wrap}
+.workbook-details{margin-top:13px;border-top:1px solid #d4e1df;padding-top:10px}
+.workbook-details summary{cursor:pointer;font-weight:670;color:#075b47}
+.workbook-details .project-facts{margin:8px 0 0;grid-template-columns:minmax(75px,1fr) minmax(0,1.4fr)}
+.workbook-contact{padding:14px;background:#e9f3ee;border:1px solid #bed8ce;border-radius:9px}
+.workbook-role,.workbook-org{display:block}
+.workbook-role{font-weight:700;color:#266354;font-size:13px}
+.workbook-org{margin:3px 0 10px;font-size:clamp(19px,2vw,25px);letter-spacing:-.035em;color:#183039}
+.workbook-contact .muted{margin:8px 0 3px;font-size:13px}
+.workbook-contact .workbook-call{width:100%;min-height:43px;justify-content:center;white-space:normal}
+.workbook-contact .workbook-call.primary{background:#075b47;border-color:#075b47;color:#fff}
+.workbook-contact .workbook-call.primary:hover{background:#084b3b;border-color:#084b3b}
+.workbook-contact-links{display:flex;gap:5px 10px;flex-wrap:wrap;align-items:center;font-size:13px}
+.workbook-contact-links .button{max-width:100%;padding-inline:5px}
+.workbook-register{width:100%;margin-top:10px}
+.workbook-party{padding:8px 0;border-bottom:1px solid #d4e1df;font-size:13px}
+.workbook-party small,.workbook-party strong{display:block}
+.workbook-party a{margin-left:5px}
+.workbook-followup .form-grid{gap:8px 10px}
+.workbook-next{margin-top:12px;padding:8px 10px;background:#fff;border:1px solid #d4e1df;border-left:3px solid #6ba493;border-radius:7px}
+.workbook-next h4,.workbook-activity h4{margin:0;font-size:14px}
+.workbook-next .section-heading{align-items:center;margin:0;flex-wrap:wrap;gap:4px}
+.workbook-next .callback-card{padding:7px 0;border:0;border-top:1px solid #d4e1df;border-radius:0;box-shadow:none}
+.workbook-next p{margin:3px 0;font-size:13px}
+.workbook-note{margin-top:12px}
+.workbook-note .button{margin-top:7px}
+.workbook-checks{display:flex;flex-wrap:wrap;gap:5px 11px;margin-top:8px;font-size:13px}
+.workbook-checks label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.workbook-checks input{width:15px;height:15px;min-height:0;margin:0;accent-color:#075b47}
+.workbook-activity{margin-top:13px;padding-top:11px;border-top:1px solid #d4e1df}
+.workbook-activity .note{margin-top:6px}
+.workbook-activity p{margin:4px 0}
+@media(max-width:930px){.detail-drawer .detail-body.workbook-columns{grid-template-columns:1fr 1fr}.workbook-column{padding:15px}.workbook-column.workbook-followup{grid-column:1/-1;border-left:0;border-top:1px solid #d4e1df}}
+@media(max-width:560px){.detail-drawer.workbook-drawer{width:calc(100vw - 20px)}.detail-drawer .detail-body.workbook-columns{display:flex;flex-direction:column}.workbook-column+.workbook-column{border-left:0;border-top:1px solid #d4e1df}.workbook-photo img{height:150px}.workbook-drawer .workbook-header{padding:11px 14px}}

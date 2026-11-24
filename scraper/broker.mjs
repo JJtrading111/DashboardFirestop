@@ -73,13 +73,32 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
   const expired=db.prepare("SELECT * FROM scraper_jobs WHERE status='running' AND lease_until<=?").all(now());
   for(const job of expired){db.prepare("UPDATE scraper_jobs SET status='failed',finished_at=?,lease_hash=NULL WHERE id=?").run(now(),job.id);db.prepare("UPDATE scraper_sources SET status='error',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error='Het ophalen is onderbroken. Start opnieuw een proef.',last_finished_at=?,counts_json=?,last_processed=?,last_total=? WHERE source_id=?").run(now(),job.counts_json,job.processed,job.total,job.source_id);}
  }
- function claim(){return transaction(()=>{
+ function queueWorkbookRefreshes(){
+  const migration='lead_workbook_refresh_v1';
+  if(db.prepare('SELECT 1 FROM scraper_meta WHERE key=?').get(migration))return;
+  const s=readState();
+  const legacySources=new Set(s.leads.filter(lead=>lead.imported&&!lead.projectDetails).flatMap(lead=>lead.sourceIds??[lead.source]));
+  let waiting=false;
+  for(const entry of s.sources){
+   if(!legacySources.has(entry.id)||entry.deleted||entry.provider!=='bouwberichten'||!entry.importEnabled||!entry.filterParameters?.length)continue;
+   const cfg=row(entry.id);if(!cfg?.encrypted_login||!cfg.test_passed)continue;
+   const key=migration+':'+entry.id;if(db.prepare('SELECT 1 FROM scraper_meta WHERE key=?').get(key))continue;
+   const previous=db.prepare("SELECT mode FROM scraper_jobs WHERE source_id=? AND status='finished' ORDER BY finished_at DESC,rowid DESC LIMIT 1").get(entry.id);
+   if(!previous)continue;
+   if(active(entry.id)){waiting=true;continue;}
+   // Refresh only the selection and mode already completed by this connection.
+   const jobId=queue(entry.id,previous.mode);db.prepare('INSERT INTO scraper_meta(key,value) VALUES(?,?)').run(key,jobId);
+  }
+  if(!waiting)db.prepare('INSERT INTO scraper_meta(key,value) VALUES(?,?)').run(migration,date(now()));
+ }
+ function claim({leadWorkbook=false}={}){return transaction(()=>{
   db.prepare("INSERT INTO scraper_meta(key,value) VALUES('worker_seen',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(now()));expire();
   for(const cfg of db.prepare('SELECT * FROM scraper_sources WHERE schedule_enabled=1 AND next_run_at<=?').all(now())){
    const s=readState().sources.find(s=>s.id===cfg.source_id&&!s.deleted&&s.provider==='bouwberichten'),credential=db.prepare('SELECT enabled FROM source_import_credentials WHERE source_id=?').get(cfg.source_id);
    if(!s||!credential?.enabled||!cfg.test_passed||!cfg.encrypted_login){invalidate(cfg.source_id);continue;}
    if(!active(cfg.source_id))queue(cfg.source_id,'full');db.prepare('UPDATE scraper_sources SET next_run_at=? WHERE source_id=?').run(now()+DAY,cfg.source_id);
   }
+  if(leadWorkbook===true)queueWorkbookRefreshes();
   const job=db.prepare("SELECT * FROM scraper_jobs WHERE status='queued' ORDER BY queued_at,rowid LIMIT 1").get();if(!job)return{job:null};
   const s=usable(job.source_id),cfg=row(job.source_id),credential=db.prepare('SELECT enabled FROM source_import_credentials WHERE source_id=?').get(job.source_id);
   if(!cfg?.encrypted_login||!credential?.enabled){cancel(job.source_id);return{job:null};}
@@ -97,7 +116,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
   const{job,credential}=leased(id,p,{finished:kind==='finish'||kind==='batch'}),maximum=job.mode==='test'?5:5000;
   db.prepare("INSERT INTO scraper_meta(key,value) VALUES('worker_seen',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(now()));
   if(kind==='batch'){
-   if(!integer(p.batch,999)||!Array.isArray(p.items)||!p.items.length||p.items.length>100)fail(400,'De ophaalbatch is ongeldig.');
+   if(!integer(p.batch,maximum-1)||!Array.isArray(p.items)||!p.items.length||p.items.length>100)fail(400,'De ophaalbatch is ongeldig.');
    const fingerprint=hash(JSON.stringify(p.items)),existing=db.prepare('SELECT * FROM scraper_batches WHERE job_id=? AND batch=?').get(id,p.batch);
    if(existing){if(existing.payload_hash!==fingerprint)fail(409,'Deze ophaalbatch is al anders verwerkt.');return{counts:JSON.parse(existing.counts_json)};}
    if(job.status!=='running'||job.processed+p.items.length>maximum)fail(400,'Deze ophaalopdracht bevat te veel projecten.');
@@ -109,7 +128,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
    if(!integer(p.processed,maximum)||!integer(p.total,10000000)||p.processed>p.total)fail(400,'De ophaalvoortgang is ongeldig.');
    if(job.total!==null&&p.total!==job.total)fail(409,'Het brontotaal is gewijzigd. Start opnieuw een proef.');
    if(job.mode==='full'&&p.total>maximum)fail(409,'Deze selectie is te groot. Verklein de filterselectie tot maximaal 5000 projecten.');
-   db.prepare('UPDATE scraper_jobs SET total=? WHERE id=?').run(p.total,id);return{ok:true};
+   db.prepare('UPDATE scraper_jobs SET total=?,lease_until=? WHERE id=?').run(p.total,now()+LEASE,id);return{ok:true};
   }
   if(kind==='finish'){
    if(job.status==='finished')return{ok:true,counts:JSON.parse(job.counts_json)};
