@@ -68,13 +68,14 @@ async function api(path,{method='GET',body,publicRequest=false}={}){
  return result;
 }
 function applyServer(result){if(!session?.authenticated)throw Error('Je sessie is verlopen. Log opnieuw in.');state=result.state;ui.userId=result.userId;ui.companyId=result.companyId;lastSync=new Date();save();}
-async function refreshState(companyId=ui.companyId,{renderPage=true,force=false}={}){
+async function refreshState(companyId=ui.companyId,{renderPage=true,force=false,preserveEditing=false}={}){
  if(!session?.authenticated||(!force&&pendingMutations))return;
  const version=++refreshVersion;
  const result=await api('/api/state'+(companyId?'?companyId='+encodeURIComponent(companyId):''));
  if(version!==refreshVersion||!session?.authenticated)return;
  applyServer(result);
- if(renderPage)render();else renderToasts();
+ const editing=ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea');
+ if(renderPage&&!(preserveEditing&&editing))render();else{if(preserveEditing&&ui.modal?.type==='source-scraper')renderOverlay();renderToasts();}
  return result;
 }
 function mutate(type,payload={},targetCompany=ui.companyId){
@@ -139,9 +140,16 @@ function matchesProjectDate(date,from,to){
  if(!from&&!to)return true;
  return isProjectDate(date)&&(!from||date>=from)&&(!to||date<=to);
 }
+function leadSearchText(lead){
+ let projectId='';
+ try{const url=new URL(lead.sourceUrl),match=/^\/projecten\/(\d{1,16})\/?$/.exec(url.pathname);if(url.origin==='https://portal.bouwberichten.nl'&&!url.username&&!url.password&&match)projectId=match[1];}catch{}
+ const externalId=String(lead.importExternalId??'');
+ return [lead.title,lead.organization,lead.city,lead.contact,...(lead.tags??[]),externalId.startsWith('url:')?'':externalId,projectId].join(' ').toLowerCase();
+}
 function filteredLeads(){
  const dateList=ui.route==='leads'||ui.route==='calls',sort=dateList?ui.projectDateSort:null;
- return state.leads.filter(l=>{const w=work(l),q=ui.query.toLowerCase();return (!dateList||(matchesProjectDate(l.projectDetails?.scheduleStart,ui.constructionFrom,ui.constructionTo)&&matchesProjectDate(l.projectDetails?.scheduleEnd,ui.deliveryFrom,ui.deliveryTo)))&&(!q||[l.title,l.organization,l.city,l.contact,...l.tags].join(' ').toLowerCase().includes(q))&&(ui.source==='all'||leadMatchesSource(l,ui.source))&&(ui.priority==='all'||w.priority===ui.priority)&&(ui.status==='all'||w.status===ui.status)&&(ui.owner==='all'||w.ownerId===(ui.owner==='me'?currentUser().id:ui.owner))&&(ui.availability==='all'||eligible(l).allowed);}).sort((a,b)=>{
+ const query=ui.query.trim().toLowerCase();
+ return state.leads.filter(l=>{const w=work(l);return (!dateList||(matchesProjectDate(l.projectDetails?.scheduleStart,ui.constructionFrom,ui.constructionTo)&&matchesProjectDate(l.projectDetails?.scheduleEnd,ui.deliveryFrom,ui.deliveryTo)))&&(!query||leadSearchText(l).includes(query))&&(ui.source==='all'||leadMatchesSource(l,ui.source))&&(ui.priority==='all'||w.priority===ui.priority)&&(ui.status==='all'||w.status===ui.status)&&(ui.owner==='all'||w.ownerId===(ui.owner==='me'?currentUser().id:ui.owner))&&(ui.availability==='all'||eligible(l).allowed);}).sort((a,b)=>{
   if(sort){
    const first=a.projectDetails?.[sort.field],second=b.projectDetails?.[sort.field];
    const firstKnown=isProjectDate(first),secondKnown=isProjectDate(second);
@@ -275,7 +283,7 @@ function render(){
 function renderPage(){switch(ui.route){case'leads':return leadsPage();case'kanban':return kanbanPage();case'calls':return callsPage();case'callbacks':return callbacksPage();case'feed':return feedPage();case'reports':return reportsPage();case'sources':return sourcesPage();case'team':return teamPage();case'settings':return settingsPage();default:return dashboardPage();}}
 function dashboardPage(){const all=state.leads,available=all.filter(l=>eligible(l).allowed),todo=callbacks(),due=todo.filter(c=>new Date(c.dueAt)<=Date.now()),commitments=all.filter(l=>work(l).commitment).length,calc=all.filter(l=>work(l).calculation).length;return `${heading('Elke kans in beeld.','Van eerste signaal naar een goed gesprek. Dit is je werkvoorraad voor vandaag.',btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary'))}<div class="stats-grid">${stat('Centrale leads',all.length,`${leadSources().length} bronnen`,'layers','blue')}${stat('Nu te bellen',available.length,`${all.length-available.length} binnen de belwachttijd`,'phone','green')}${stat('Terugbelafspraken',todo.length,`${due.length} vragen nu aandacht`,'calendar','amber')}${stat('Toezeggingen',commitments,`${calc} klaar voor calculatie`,'chart','blue')}</div><div class="content-grid"><section class="panel"><div class="panel-head"><div><div class="eyebrow">AAN DE SLAG</div><h2>Kansen om op te pakken</h2></div><button class="button ghost small" data-route="leads">Alle leads bekijken</button></div><div class="filter-row dashboard-filters"><div class="tabs"><button class="tab ${ui.availability==='all'?'active':''}" data-action="dash-filter" data-value="all">Alle kansen</button><button class="tab ${ui.availability==='available'?'active':''}" data-action="dash-filter" data-value="available">Nu belbaar</button><button class="tab ${ui.owner==='me'?'active':''}" data-action="dash-filter" data-value="me">Mijn leads</button></div></div>${leadTable(filteredLeads().slice(0,6),true)}<div class="panel-bottom"><span>${filteredLeads().length} kansen in je selectie</span><button class="button secondary small" data-route="calls">${icon('phone')} Open mijn bellijst</button></div></section><div class="dashboard-right"><section class="panel"><div class="panel-head"><h2>Je terugbelmomenten</h2><span class="badge amber">${due.length} openstaand</span></div><div class="panel-body callback-list">${todo.slice(0,3).map(callbackCard).join('')||'<p class="muted">Je planning is helemaal bij.</p>'}</div><button class="panel-link" data-route="callbacks">Bekijk de volledige planning</button></section><section class="panel"><div class="panel-head"><h2>Laatste signalen</h2>${icon('activity')}</div><div class="news-list">${feedItems().slice(0,3).map(newsItem).join('')}</div><button class="panel-link" data-route="feed">Open de nieuwsfeed</button></section></div></div><section class="sources-strip"><div>${icon('link')}<strong>Je bronnen, op één plek</strong><span class="muted">Beheer de importinstellingen per bron.</span></div><div>${leadSources().map(s=>`${sourceBadge(s.id)}<span class="muted source-demo">${sourceImportStatus(s).label}</span>`).join('')}<button class="button ghost small" data-route="sources">Beheer bronnen</button></div></section>`;}
 function stat(label,value,meta,i,tone){return `<div class="stat-card"><div class="stat-top"><span class="stat-label">${label}</span><span class="stat-icon ${tone}">${icon(i)}</span></div><div class="stat-value">${value}</div><div class="stat-meta">${meta}</div></div>`;}
-function filters(){return `<div class="toolbar"><label class="search">${icon('search')}<input id="lead-search" type="search" placeholder="Zoek project, organisatie of plaats…" aria-label="Zoek leads" data-field="query" value="${esc(ui.query)}"></label>${selectFilter('source','Bron',[['all','Alle bronnen'],...leadSourceOptions()])}${selectFilter('priority','Prioriteit',[['all','Alle prioriteiten'],...Object.entries(priorityNames)])}${selectFilter('status','Status',[['all','Alle statussen'],...company().columns.map(c=>[c.id,c.name])])}${selectFilter('owner','Verkoper',[['all','Alle verkopers'],['me','Mijn leads'],...activeUsers().map(u=>[u.id,u.name])])}<button class="button ghost small" data-action="reset-filters">Wis filters</button></div>`;}
+function filters(){return `<div class="toolbar"><label class="search">${icon('search')}<input id="lead-search" type="search" placeholder="Zoek project, organisatie, plaats of Bouwberichten-ID…" aria-label="Zoek leads" data-field="query" value="${esc(ui.query)}"></label>${selectFilter('source','Bron',[['all','Alle bronnen'],...leadSourceOptions()])}${selectFilter('priority','Prioriteit',[['all','Alle prioriteiten'],...Object.entries(priorityNames)])}${selectFilter('status','Status',[['all','Alle statussen'],...company().columns.map(c=>[c.id,c.name])])}${selectFilter('owner','Verkoper',[['all','Alle verkopers'],['me','Mijn leads'],...activeUsers().map(u=>[u.id,u.name])])}<button class="button ghost small" data-action="reset-filters">Wis filters</button></div>`;}
 function selectFilter(field,label,options){return `<label class="filter-select"><span class="sr-only">${label}</span><select data-field="${field}" aria-label="${label}">${options.map(([v,l])=>`<option value="${v}" ${ui[field]===v?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`;}
 function projectDateFilter(label,key){
  const from=ui[key+'From'],to=ui[key+'To'],invalid=!!(from&&to&&from>to);
@@ -299,10 +307,10 @@ function projectDateCell(value){
  return `<td class="project-date-cell">${date?`<time datetime="${esc(value)}">${esc(date)}</time>`:'<span class="muted">Onbekend</span>'}</td>`;
 }
 function leadTable(leads,compact=false){if(!leads.length)return empty();return `<div class="table-wrap"><table><thead><tr><th>Project & organisatie</th>${compact?'':Object.entries(projectDateColumns).map(([field,label])=>projectDateHeader(field,label)).join('')}<th>Bron</th><th>Prioriteit</th><th>Status</th>${compact?'':'<th>Verkoper</th>'}<th>Opvolging</th><th><span class="sr-only">Openen</span></th></tr></thead><tbody>${leads.map(l=>{const w=work(l),e=eligible(l);return `<tr><td><button class="lead-title" data-action="open-lead" data-id="${l.id}">${esc(l.title)}</button><div class="lead-meta">${esc(l.organization)} <span>·</span> ${esc(l.city)}</div></td>${compact?'':`${projectDateCell(l.projectDetails?.scheduleStart)}${projectDateCell(l.projectDetails?.scheduleEnd)}`}<td>${leadSourceBadges(l)}</td><td>${priorityBadge(w.priority)}</td><td><span class="status-pill status-${company().columns.findIndex(c=>c.id===w.status)}">${esc(statusName(w.status))}</span></td>${compact?'':`<td><span class="seller-cell">${esc(w.ownerId?userName(w.ownerId):'Niet toegewezen')}</span></td>`}<td><span class="call-state ${e.allowed?'available':'waiting'}">${icon(e.allowed?'phone':'clock')}${e.reason==='callback'?'Eigen terugbelmoment':e.allowed?'Nu belbaar':'Wachttijd'}</span><div class="lead-meta">${w.commitment?'Toezegging':''}${w.commitment&&w.calculation?' · ':''}${w.calculation?'Calculatie':''}</div></td><td><button class="button icon small" data-action="open-lead" data-id="${l.id}" aria-label="Open ${esc(l.title)}">${icon('chevron')}</button></td></tr>`;}).join('')}</tbody></table></div>`;}
-function leadsPage(){const leads=filteredLeads();return `${heading('Alle leads','Eén centrale voorraad. De opvolging die je hier ziet, hoort bij je actieve bedrijf.',`${btn(`${icon('download')} Exporteer selectie`,'export','secondary')}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}<section class="panel">${filters()}${projectDateFilters()}<div class="section-heading"><strong>${leads.length} leads</strong><span class="muted">Statussen en notities van ${esc(company().name)}</span></div>${leadTable(leads)}</section>`;}
-function kanbanPage(){
+function leadsPage(){const leads=filteredLeads();return `${heading('Alle leads','Eén centrale voorraad. De opvolging die je hier ziet, hoort bij je actieve bedrijf.',`${btn(`${icon('download')} Exporteer selectie`,'export','secondary')}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}<section class="panel">${filters()}${projectDateFilters()}<div class="section-heading"><strong data-lead-search-count aria-live="polite">${leads.length} leads</strong><span class="muted">Statussen en notities van ${esc(company().name)}</span></div><div data-lead-search-results>${leadTable(leads)}</div></section>`;}
+function kanbanColumns(leads=filteredLeads()){
  const columns=company().columns.map((c,i)=>{
-  const selected=filteredLeads().filter(l=>work(l).status===c.id);
+  const selected=leads.filter(l=>work(l).status===c.id);
   const cards=c.id==='opvolgen'?sortFollowUpLeads(state,company().id,selected):selected;
   return `<section class="kanban-column" data-column="${c.id}" aria-label="${esc(c.name)}"><div class="kanban-head"><span class="column-marker marker-${i}"></span><h2>${esc(c.name)}</h2><span class="column-count">${cards.length}</span>${canManage()?`<button class="button icon small" data-action="columns" aria-label="Kolom ${esc(c.name)} hernoemen">${icon('edit')}</button>`:''}</div>${cards.map(l=>{
    const w=work(l),next=c.id==='opvolgen'?nextFollowUpAt(state,company().id,l.id):null;
@@ -310,9 +318,18 @@ function kanbanPage(){
    return `<article class="kanban-card" draggable="true" data-lead="${l.id}" data-action="open-lead" data-id="${l.id}" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Open ${esc(l.title)}"><div class="card-top">${leadSourceBadges(l)}${priorityBadge(w.priority)}</div><h3 class="lead-title">${esc(l.title)}</h3><p class="lead-meta">${esc(l.organization)}<br>${esc(l.city)}</p>${followUp}<div class="card-tags">${w.commitment?'<span class="badge green">Toezegging</span>':''}${w.calculation?'<span class="badge blue">Calculatie</span>':''}</div><div class="card-footer"><span>${esc(w.ownerId?userName(w.ownerId).split(' ')[0]:'Niet toegewezen')}</span><span>${icon('mail')} ${w.notes.length} notities</span></div></article>`;
   }).join('')}<button class="kanban-add" data-action="new-lead" data-status="${c.id}">${icon('plus')} Lead toevoegen</button></section>`;
  }).join('');
- return `${heading('Van kans naar opdracht','Klik op een kaart om de lead te openen of sleep deze naar een andere kolom.',`${canManage()?btn(`${icon('edit')} Kolommen beheren`,'columns'):''}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}${filters()}<div class="kanban">${columns}</div><p class="muted help-text">Opvolgen staat op datum van het vroegste open terugbelmoment, de vroegste datum bovenaan. Leads zonder terugbelmoment staan onderaan.</p>`;
+ return columns;
 }
-function callsPage(){const leads=filteredLeads(),available=leads.filter(l=>eligible(l).allowed);return `${heading('Een goed gesprek begint hier','Werk je prioriteiten af. Een belregistratie start de wachttijd voor andere bedrijven.',btn(`${icon('download')} Exporteer bellijst`,'export'))}<div class="call-summary"><div>${icon('phone')}<strong>${available.length} leads nu belbaar</strong></div><span>Globale wachttijd: <strong>${state.settings.cooldownHours} uur</strong> · Eigen vervallen terugbelafspraken hebben voorrang.</span>${btn('Instellingen','go-settings','ghost small')}</div><section class="panel">${filters()}${projectDateFilters()}<div class="filter-row"><label class="check-row"><input type="checkbox" data-field="available-check" ${ui.availability==='available'?'checked':''}> Alleen nu belbare leads</label></div>${leadTable(leads)}</section>`;}
+function kanbanPage(){return `${heading('Van kans naar opdracht','Klik op een kaart om de lead te openen of sleep deze naar een andere kolom.',`${canManage()?btn(`${icon('edit')} Kolommen beheren`,'columns'):''}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}${filters()}<div class="kanban" data-lead-search-results>${kanbanColumns()}</div><p class="muted help-text">Opvolgen staat op datum van het vroegste open terugbelmoment, de vroegste datum bovenaan. Leads zonder terugbelmoment staan onderaan.</p>`;}
+function callsPage(){const leads=filteredLeads(),available=leads.filter(l=>eligible(l).allowed);return `${heading('Een goed gesprek begint hier','Werk je prioriteiten af. Een belregistratie start de wachttijd voor andere bedrijven.',btn(`${icon('download')} Exporteer bellijst`,'export'))}<div class="call-summary"><div>${icon('phone')}<strong data-call-search-count aria-live="polite">${available.length} leads nu belbaar</strong></div><span>Globale wachttijd: <strong>${state.settings.cooldownHours} uur</strong> · Eigen vervallen terugbelafspraken hebben voorrang.</span>${btn('Instellingen','go-settings','ghost small')}</div><section class="panel">${filters()}${projectDateFilters()}<div class="filter-row"><label class="check-row"><input type="checkbox" data-field="available-check" ${ui.availability==='available'?'checked':''}> Alleen nu belbare leads</label></div><div data-lead-search-results>${leadTable(leads)}</div></section>`;}
+function renderLeadSearchResults(){
+ const results=$('[data-lead-search-results]');if(!results)return;
+ const leads=filteredLeads();
+ results.innerHTML=ui.route==='kanban'?kanbanColumns(leads):leadTable(leads);
+ const count=$('[data-lead-search-count]'),available=$('[data-call-search-count]');
+ if(count)count.textContent=leads.length+' leads';
+ if(available)available.textContent=leads.filter(lead=>eligible(lead).allowed).length+' leads nu belbaar';
+}
 function callbackCard(c,inWorkbook=false){
  const due=Date.parse(c.dueAt)<=Date.now(),leadId=esc(c.lead.id),attributes=`data-id="${esc(c.id)}" data-lead-id="${leadId}"`;
  return `<article class="callback-card"><div class="callback-time ${due?'overdue':''}">${icon('clock')} ${due?'Nu opvolgen · ':''}${fmt(c.dueAt)}</div>
@@ -609,6 +626,7 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('change',async e=>{
  const el=e.target;if(!state)return;
+ if(el.dataset.field==='query')return;
  if(el.hasAttribute('data-account-role')){updateAccountCompanyField(el);return;}
  if(el.hasAttribute('data-scraper-schedule')){try{await scraperAction('source.scraper.schedule',el.dataset.scraperSchedule,{enabled:el.checked});toast(el.checked?'Dagelijks ophalen staat aan.':'Dagelijks ophalen staat uit.');}catch(error){if(state){render();toast(error.message,'amber');}}return;}
  if(el.hasAttribute('data-source-provider')){const form=el.closest('form'),bouw=el.value==='bouwberichten',fields=form.querySelector('[data-bouw-filter-fields]'),filter=form.querySelector('[name="filterUrl"]'),name=form.querySelector('[name="name"]'),url=form.querySelector('[name="url"]');fields.hidden=!bouw;filter.disabled=!bouw;name.placeholder=bouw?'Bouwberichten – Gegund vanaf 01-01-2026':'Bijv. Woningcorporaties';if(bouw&&!url.value.trim())url.value='https://portal.bouwberichten.nl/projecten';return;}
@@ -628,7 +646,13 @@ document.addEventListener('change',async e=>{
  }catch(error){if(state){render();toast(error.message,'amber');}}
 });
 let searchTimer;
-document.addEventListener('input',e=>{if(e.target.dataset.field==='query'){const value=e.target.value,pos=e.target.selectionStart;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{ui.query=value;render();const input=$('#lead-search');input?.focus();try{input?.setSelectionRange(pos,pos);}catch{}},180);}});
+function updateLeadSearch(e){
+ const input=e.target;if(!state||input.dataset.field!=='query')return;
+ ui.query=input.value;clearTimeout(searchTimer);if(e.isComposing)return;
+ searchTimer=setTimeout(()=>{if(input.isConnected&&input===$('#lead-search')&&!ui.modal&&!ui.drawer)renderLeadSearchResults();},180);
+}
+document.addEventListener('input',updateLeadSearch);
+document.addEventListener('compositionend',updateLeadSearch);
 document.addEventListener('submit',async e=>{
  e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));
  if(form.getAttribute('id')==='login-form'||form.getAttribute('id')==='activation-form'){try{await authenticate(form,data);}catch(error){authError=error.message;renderAuth();}return;}
@@ -670,4 +694,4 @@ function exportLeads(){csv(`bouwberichten-${ui.route==='calls'?'bellijst':'leads
 function exportReport(){const cid=isChief()?(ui.reportCompany==='current'?company().id:ui.reportCompany):company().id;const rows=reportRows(state,{companyId:cid,sellerId:ui.reportSeller,source:ui.reportSource,from:ui.reportFrom,to:ui.reportTo});csv('bouwberichten-conversierapport.csv',[['Bedrijf','Verkoper','Bron','Toegewezen leads','Gebeld','Toezeggingen','Calculaties','Conversie (%)'],...rows.map(r=>[r.companyName,r.sellerName,reportSourceLabel(r),r.total,r.contacted,r.commitments,r.calculations,Math.round(r.conversion)])]);}
 initialize();
 setInterval(refreshScraperModal,10000);
-setInterval(async()=>{if(!session?.authenticated||pendingMutations||document.hidden)return;try{const editing=!!(ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea'));await refreshState(ui.companyId,{renderPage:!editing});}catch(error){if(state)toast(error.message,'amber');}},30000);
+setInterval(async()=>{if(!session?.authenticated||pendingMutations||document.hidden)return;try{const editing=!!(ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea'));await refreshState(ui.companyId,{renderPage:!editing,preserveEditing:true});}catch(error){if(state)toast(error.message,'amber');}},30000);
