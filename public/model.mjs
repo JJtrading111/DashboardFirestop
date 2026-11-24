@@ -107,6 +107,15 @@ export function inviteUser(state, { name, email, companyId, role }) {
   return invitation;
 }
 
+export function leadSourceIds(lead) {
+  return [...new Set([lead?.source, ...(Array.isArray(lead?.sourceIds) ? lead.sourceIds : [])]
+    .filter(value => typeof value === 'string' && value.length > 0))];
+}
+
+export function leadMatchesSource(lead, sourceId) {
+  return sourceId === 'all' || leadSourceIds(lead).includes(sourceId);
+}
+
 export function reportRows(state, { companyId = 'all', sellerId = 'all', source = 'all', from = '', to = '' } = {}) {
   // The date range defines an acquisition cohort by the lead's creation day in
   // Amsterdam. Later notes, calls and conversion updates do not change membership.
@@ -114,7 +123,7 @@ export function reportRows(state, { companyId = 'all', sellerId = 'all', source 
   for (const company of state.companies) {
     if (companyId !== 'all' && companyId !== company.id) continue;
     for (const lead of state.leads) {
-      if (source !== 'all' && source !== lead.source) continue;
+      if (!leadMatchesSource(lead, source)) continue;
       const workspace = state.workspaces[company.id]?.[lead.id];
       if (!workspace?.ownerId) continue;
       if (sellerId !== 'all' && sellerId !== workspace.ownerId) continue;
@@ -122,9 +131,13 @@ export function reportRows(state, { companyId = 'all', sellerId = 'all', source 
       if (!creationDay || (from && creationDay < from) || (to && creationDay > to)) continue;
       const seller = state.users.find(user => user.id === workspace.ownerId);
       const historicCall = workspace.calls.find(call => call.userId === workspace.ownerId);
-      const key = `${company.id}|${workspace.ownerId}|${lead.source}`;
+      const sourceIds = leadSourceIds(lead);
+      const attributedSource = source === 'all' ? lead.source : source;
+      // Separate membership groups preserve exact per-filter totals without
+      // duplicating a lead in its company's overall conversion figures.
+      const key = JSON.stringify([company.id, workspace.ownerId, attributedSource, [...sourceIds].sort()]);
       if (!rows.has(key)) rows.set(key, { companyId: company.id, companyName: company.name,
-        sellerId: workspace.ownerId, sellerName: historicCall?.userName ?? seller?.name ?? 'Voormalige medewerker', source: lead.source,
+        sellerId: workspace.ownerId, sellerName: historicCall?.userName ?? seller?.name ?? 'Voormalige medewerker', source: attributedSource, sourceIds,
         total: 0, contacted: 0, commitments: 0, calculations: 0, conversion: 0 });
       const row = rows.get(key);
       row.total++;

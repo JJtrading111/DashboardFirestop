@@ -6,6 +6,7 @@ import {mkdirSync,readFileSync,existsSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createDemoState,getWorkspace,recordCall,transferUser} from './public/model.mjs';
+import {normalizeBouwberichtenFilterUrl} from './public/bouwberichten-filters.mjs';
 
 const scrypt=promisify(scryptCallback), ROOT=path.dirname(fileURLToPath(import.meta.url));
 const DAY=86400000,SESSION_AGE=12*60*60*1000,REMEMBERED_SESSION_AGE=30*DAY,INVITE_AGE=7*DAY;
@@ -21,6 +22,7 @@ const emailValue=v=>{const email=text(v,'E-mailadres',254).toLowerCase();if(!/^[
 const tokenValue=v=>{if(typeof v!=='string'||!/^[A-Za-z0-9_-]{32,128}$/.test(v))fail(400,'Deze uitnodigingslink is ongeldig.');return v;};
 const publicUser=u=>({id:u.id,name:u.name,email:u.email,companyId:u.companyId,role:u.role,status:u.status});
 const isLeadSource=source=>!!source&&!source.deleted&&source.id!=='outlook'&&(!source.kind||source.kind==='lead');
+const sourceProvider=source=>['generic','bouwberichten'].includes(source?.provider)?source.provider:source?.id==='bouw'?'bouwberichten':'generic';
 const canonicalJson=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const importText=(value,label,max)=>value===undefined||value===null?'':text(value,label,max,0);
 function normalizeImportItem(item){
@@ -103,11 +105,12 @@ export function createApp(options={}){
  CREATE TABLE IF NOT EXISTS source_import_credentials(source_id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,enabled INTEGER NOT NULL,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS source_import_status(source_id TEXT PRIMARY KEY,last_import_at TEXT,counts_json TEXT,last_error TEXT);
  CREATE TABLE IF NOT EXISTS source_items(source_id TEXT NOT NULL,external_id TEXT NOT NULL,lead_id TEXT NOT NULL,imported_json TEXT NOT NULL,PRIMARY KEY(source_id,external_id));
+ CREATE TABLE IF NOT EXISTS provider_items(provider TEXT NOT NULL,external_id TEXT NOT NULL,lead_id TEXT NOT NULL,PRIMARY KEY(provider,external_id));
  CREATE TABLE IF NOT EXISTS import_runs(source_id TEXT NOT NULL,run_id TEXT NOT NULL,payload_hash TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(source_id,run_id));
  CREATE TABLE IF NOT EXISTS import_errors(id TEXT PRIMARY KEY,source_id TEXT NOT NULL,created_at TEXT NOT NULL,status INTEGER NOT NULL,message TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
  CREATE INDEX IF NOT EXISTS invitations_email ON invitations(email);`);
- const readState=()=>{const s=JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json);s.settings.cooldownUnit=s.settings.cooldownUnit==='days'?'days':'hours';const credentials=new Map(db.prepare('SELECT source_id,enabled FROM source_import_credentials').all().map(row=>[row.source_id,row])),statuses=new Map(db.prepare('SELECT * FROM source_import_status').all().map(row=>[row.source_id,row]));for(const source of s.sources){const credential=credentials.get(source.id),status=statuses.get(source.id);source.importConfigured=!source.deleted&&!!credential;source.importEnabled=source.importConfigured&&!!credential.enabled;source.lastImportAt=status?.last_import_at??null;source.lastImportCounts=status?.counts_json?JSON.parse(status.counts_json):null;source.lastImportError=status?.last_error??null;source.enabled=source.importEnabled&&!!source.lastImportAt;}return s;};
+ const readState=()=>{const s=JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json);s.settings.cooldownUnit=s.settings.cooldownUnit==='days'?'days':'hours';const credentials=new Map(db.prepare('SELECT source_id,enabled FROM source_import_credentials').all().map(row=>[row.source_id,row])),statuses=new Map(db.prepare('SELECT * FROM source_import_status').all().map(row=>[row.source_id,row]));for(const source of s.sources){const credential=credentials.get(source.id),status=statuses.get(source.id);source.provider=sourceProvider(source);source.filterUrl??='';source.filterParameters??=[];source.filterSummary??='';source.importConfigured=!source.deleted&&!!credential;source.importEnabled=source.importConfigured&&!!credential.enabled;source.lastImportAt=status?.last_import_at??null;source.lastImportCounts=status?.counts_json?JSON.parse(status.counts_json):null;source.lastImportError=status?.last_error??null;source.enabled=source.importEnabled&&!!source.lastImportAt;}return s;};
  const writeState=s=>{const copy={...s,invitations:[]};db.prepare('INSERT INTO app_state(id,json) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(JSON.stringify(copy));};
  const transaction=fn=>{db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}};
  function removeDemoLeads(s,actor,cid){
@@ -207,7 +210,7 @@ export function createApp(options={}){
   // Transferred owners remain as anonymous historical labels; never expose their new company or email.
   for(const historicId of referenced)if(!own.some(u=>u.id===historicId)){const original=s.users.find(u=>u.id===historicId);own.push({id:historicId,name:original?.name||'Voormalige medewerker',email:'',companyId:null,role:'verkoper',status:'historisch'});}
   const latest=new Map();for(const call of s.callLog){const old=latest.get(call.leadId);if(!old||Date.parse(call.at)>Date.parse(old.at))latest.set(call.leadId,call);}
-  return{state:{...s,companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:''}))},userId:actor.id,companyId:cid};
+  return{state:{...s,companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
  }
  function requireCompany(s,cid){const c=s.companies.find(c=>c.id===cid);if(!c)fail(404,'Dit bedrijf bestaat niet.');return c;}
  function requireLead(s,lid){const l=s.leads.find(l=>l.id===lid);if(!l)fail(404,'Deze lead bestaat niet.');return l;}
@@ -216,6 +219,14 @@ export function createApp(options={}){
  function requireManager(actor,cid){if(actor.role==='verkoper'||actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je hebt geen beheerrechten voor dit bedrijf.');}
  function sourceConnection(p){let url='';if(p.url!==undefined&&p.url!==''){try{const parsed=new URL(text(p.url,'Bron-URL',500));if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password||parsed.search||parsed.hash)throw Error();url=parsed.href;}catch{fail(400,'Gebruik een http(s)-URL zonder inloggegevens, tokens of queryparameters.');}}const username=p.username===undefined?'':text(p.username,'Gebruikersnaam',160,0);return{url,username};}
  function sourceName(s,value,excludedId=null){const name=text(value,'Bronnaam',120);if(s.sources.some(source=>!source.deleted&&source.id!==excludedId&&source.name.toLowerCase()===name.toLowerCase()))fail(409,'Deze bronnaam bestaat al.');return name;}
+ function sourceDefinition(p,existing){
+  const provider=p.provider===undefined?(existing?sourceProvider(existing):'generic'):p.provider;if(!['generic','bouwberichten'].includes(provider))fail(400,'Kies een geldige bronprovider.');
+  if(existing&&provider!==sourceProvider(existing)&&(db.prepare('SELECT 1 FROM source_items WHERE source_id=? LIMIT 1').get(existing.id)||db.prepare('SELECT 1 FROM import_runs WHERE source_id=? LIMIT 1').get(existing.id)))fail(409,'De provider kan niet veranderen nadat deze bron projecten heeft geïmporteerd.');
+  const raw=p.filterUrl===undefined?(existing?.filterUrl??''):p.filterUrl;if(typeof raw!=='string')fail(400,'Gebruik een geldige filterlink.');
+  if(provider!=='bouwberichten'&&raw.trim())fail(400,'Een Bouwberichten-filterlink hoort bij de provider Bouwberichten.');
+  let filter={filterUrl:'',filterParameters:[],filterSummary:''};if(raw.trim()){try{filter=normalizeBouwberichtenFilterUrl(raw);}catch(error){fail(400,error.message);}}
+  return{provider,...filter};
+ }
  function addFeed(s,actor,cid,message,leadId=null,type='update'){s.feed.unshift({id:id('feed'),companyId:cid,leadId,type,text:message,authorName:actor.name,at:iso(Date.now())});if(s.feed.length>10000)s.feed.length=10000;}
  function managedImportSource(s,sourceId){const source=s.sources.find(item=>item.id===sourceId&&!item.deleted);if(!source)fail(404,'Deze bron bestaat niet.');if(!isLeadSource(source))fail(400,'Deze bron ondersteunt geen leadimport.');return source;}
  function authorizedImport(req,sourceId){
@@ -235,16 +246,31 @@ export function createApp(options={}){
    const previousRun=db.prepare('SELECT * FROM import_runs WHERE source_id=? AND run_id=?').get(source.id,runId);if(previousRun){if(previousRun.payload_hash!==payloadHash)fail(409,'Dit import-run-ID is al gebruikt voor een andere batch.');return JSON.parse(previousRun.result_json);}
    const now=iso(Date.now()),counts={created:0,updated:0,unchanged:0},actor={name:'Import: '+source.name};
    for(const item of items){
-    const existing=db.prepare('SELECT * FROM source_items WHERE source_id=? AND external_id=?').get(source.id,item.externalId);let lead;
+    const shared=source.provider==='bouwberichten',own=db.prepare('SELECT * FROM source_items WHERE source_id=? AND external_id=?').get(source.id,item.externalId);let existing=own,identity;
+    if(shared){
+     identity=db.prepare('SELECT * FROM provider_items WHERE provider=? AND external_id=?').get('bouwberichten',item.externalId);
+     if(!identity){
+      // Lazily index an existing mapping; never merge two pre-existing leads.
+      const historic=db.prepare('SELECT * FROM source_items WHERE external_id=? ORDER BY rowid').all(item.externalId).find(mapping=>sourceProvider(s.sources.find(record=>record.id===mapping.source_id))==='bouwberichten');
+      if(historic){db.prepare('INSERT INTO provider_items(provider,external_id,lead_id) VALUES(?,?,?)').run('bouwberichten',item.externalId,historic.lead_id);identity={lead_id:historic.lead_id};}
+     }
+     if(!existing&&identity){existing=db.prepare('SELECT * FROM source_items WHERE lead_id=? ORDER BY rowid LIMIT 1').get(identity.lead_id);if(!existing)fail(409,'Een gedeelde bronvermelding heeft geen importsnapshot.');}
+    }
+    let lead;
     if(existing){
-     lead=s.leads.find(record=>record.id===existing.lead_id);if(!lead)fail(409,'Een bronvermelding verwijst naar een ontbrekend project.');const previous=JSON.parse(existing.imported_json);if(previous.sourceUpdatedAt&&item.fields.sourceUpdatedAt&&Date.parse(item.fields.sourceUpdatedAt)<Date.parse(previous.sourceUpdatedAt)){counts.unchanged++;continue;}const incoming={...previous};for(const field of item.providedFields)incoming[field]=item.fields[field];let changed=false;
-     for(const [field,value]of Object.entries(incoming)){if(lead[field]===previous[field]||(previous[field]===undefined&&!lead[field])){if(lead[field]!==value){lead[field]=value;changed=true;}}}
-     if(changed){lead.updatedAt=now;counts.updated++;addFeed(s,actor,null,`Projectgegevens bijgewerkt: ${lead.title}`,lead.id);}else counts.unchanged++;
-     db.prepare('UPDATE source_items SET imported_json=? WHERE source_id=? AND external_id=?').run(JSON.stringify(incoming),source.id,item.externalId);
+     lead=s.leads.find(record=>record.id===existing.lead_id);if(!lead)fail(409,'Een bronvermelding verwijst naar een ontbrekend project.');
+     let relinked=false;if(shared){const sourceIds=[...new Set([lead.source,...(Array.isArray(lead.sourceIds)?lead.sourceIds:[])].filter(value=>typeof value==='string'&&value))];relinked=!sourceIds.includes(source.id);if(relinked)sourceIds.push(source.id);lead.sourceIds=sourceIds;}
+     const previous=JSON.parse(existing.imported_json),stale=previous.sourceUpdatedAt&&item.fields.sourceUpdatedAt&&Date.parse(item.fields.sourceUpdatedAt)<Date.parse(previous.sourceUpdatedAt),incoming={...previous};let changed=false;
+     if(!stale){for(const field of item.providedFields)incoming[field]=item.fields[field];for(const [field,value]of Object.entries(incoming)){if(lead[field]===previous[field]||(previous[field]===undefined&&!lead[field])){if(lead[field]!==value){lead[field]=value;changed=true;}}}}
+     const snapshot=JSON.stringify(incoming);if(!own)db.prepare('INSERT INTO source_items(source_id,external_id,lead_id,imported_json) VALUES(?,?,?,?)').run(source.id,item.externalId,lead.id,snapshot);
+     // Shared snapshots distinguish portal changes from hand-edited lead fields across filters.
+     if(!stale){if(shared)db.prepare('UPDATE source_items SET imported_json=? WHERE lead_id=?').run(snapshot,lead.id);else db.prepare('UPDATE source_items SET imported_json=? WHERE source_id=? AND external_id=?').run(snapshot,source.id,item.externalId);}
+     if(changed||relinked){lead.updatedAt=now;counts.updated++;addFeed(s,actor,null,`${changed?'Projectgegevens bijgewerkt':'Filterbron gekoppeld'}: ${lead.title}`,lead.id);}else counts.unchanged++;
     }else{
-     lead={id:id('lead'),source:source.id,...item.fields,createdAt:now,updatedAt:now,tags:['Geïmporteerd'],demo:false,imported:true,importedAt:now,importExternalId:item.externalId};s.leads.unshift(lead);counts.created++;
+     lead={id:id('lead'),source:source.id,sourceIds:[source.id],...item.fields,createdAt:now,updatedAt:now,tags:['Geïmporteerd'],demo:false,imported:true,importedAt:now,importExternalId:item.externalId};s.leads.unshift(lead);counts.created++;
      db.prepare('INSERT INTO source_items(source_id,external_id,lead_id,imported_json) VALUES(?,?,?,?)').run(source.id,item.externalId,lead.id,JSON.stringify(item.fields));addFeed(s,actor,null,`Nieuwe centrale lead: ${lead.title}`,lead.id,'new');
     }
+    if(shared&&!identity)db.prepare('INSERT INTO provider_items(provider,external_id,lead_id) VALUES(?,?,?)').run('bouwberichten',item.externalId,lead.id);
    }
    db.prepare('INSERT INTO source_import_status(source_id,last_import_at,counts_json,last_error) VALUES(?,?,?,NULL) ON CONFLICT(source_id) DO UPDATE SET last_import_at=excluded.last_import_at,counts_json=excluded.counts_json,last_error=NULL').run(source.id,now,JSON.stringify(counts));Object.assign(source,{lastImportAt:now,lastImportCounts:counts,lastImportError:null,enabled:true});writeState(s);
    const result={sourceId:source.id,runId,counts,importedAt:now};db.prepare('INSERT INTO import_runs(source_id,run_id,payload_hash,result_json,created_at) VALUES(?,?,?,?,?)').run(source.id,runId,payloadHash,JSON.stringify(result),now);return result;
@@ -285,9 +311,9 @@ export function createApp(options={}){
     addFeed(s,actor,targetId,`Bedrijfsgegevens bijgewerkt: ${target.name}`);result={company:target};break;
    }
    case'user.update':{const target=s.users.find(u=>u.id===p.userId);if(!target)fail(404,'Deze gebruiker bestaat niet.');if(adminPassword&&target.id==='u-admin'&&p.role!=='hoofdbeheerder')fail(400,'Dit beheeraccount moet hoofdbeheerder blijven.');if(!roles.includes(p.role))fail(400,'Kies een geldige rol.');requireCompany(s,p.companyId);if(actor.role!=='hoofdbeheerder'){requireManager(actor,target.companyId);if(p.companyId!==actor.companyId||target.role==='hoofdbeheerder'||p.role==='hoofdbeheerder')fail(403,'Je kunt alleen rollen binnen je eigen bedrijf beheren.');}if(target.role==='hoofdbeheerder'&&p.role!=='hoofdbeheerder'&&s.users.filter(u=>u.role==='hoofdbeheerder'&&u.status==='actief').length===1)fail(400,'Er moet minimaal één actieve hoofdbeheerder blijven.');transferUser(s,target.id,p.companyId);target.role=p.role;db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);addFeed(s,actor,cid,`Gebruiker bijgewerkt: ${target.name}`);break;}
-   case'source.create':{requireChief(actor);const name=sourceName(s,p.name),connection=sourceConnection(p),source={id:id('source'),name,kind:'lead',...connection,enabled:false,importConfigured:false,importEnabled:false,lastImportAt:null,lastImportCounts:null,lastImportError:null};s.sources.push(source);addFeed(s,actor,null,`Bron toegevoegd: ${source.name}`);result={source};break;}
-   case'source.update':{requireChief(actor);const source=s.sources.find(item=>item.id===p.id&&!item.deleted);if(!source)fail(404,'Deze bron bestaat niet.');if(source.id==='outlook')fail(400,'Deze bron kan niet worden aangepast.');const name=p.name===undefined?source.name:sourceName(s,p.name,source.id),connection=sourceConnection(p);Object.assign(source,{name,...connection,enabled:source.importEnabled&&!!source.lastImportAt});addFeed(s,actor,null,`Bron bijgewerkt: ${source.name}`);result={source};break;}
-   case'source.delete':{requireChief(actor);const source=s.sources.find(item=>item.id===p.id&&!item.deleted);if(!source)fail(404,'Deze bron bestaat niet.');db.prepare('DELETE FROM source_import_credentials WHERE source_id=?').run(source.id);Object.assign(source,{deleted:true,url:'',username:'',enabled:false,importConfigured:false,importEnabled:false});addFeed(s,actor,null,`Bron verwijderd: ${source.name}`);result={source};break;}
+   case'source.create':{requireChief(actor);const name=sourceName(s,p.name),connection=sourceConnection(p),definition=sourceDefinition(p),source={id:id('source'),name,kind:'lead',...connection,...definition,enabled:false,importConfigured:false,importEnabled:false,lastImportAt:null,lastImportCounts:null,lastImportError:null};s.sources.push(source);addFeed(s,actor,null,`Bron toegevoegd: ${source.name}`);result={source};break;}
+   case'source.update':{requireChief(actor);const source=s.sources.find(item=>item.id===p.id&&!item.deleted);if(!source)fail(404,'Deze bron bestaat niet.');if(source.id==='outlook')fail(400,'Deze bron kan niet worden aangepast.');const name=p.name===undefined?source.name:sourceName(s,p.name,source.id),connection=sourceConnection(p),definition=sourceDefinition(p,source);Object.assign(source,{name,...connection,...definition,enabled:source.importEnabled&&!!source.lastImportAt});addFeed(s,actor,null,`Bron bijgewerkt: ${source.name}`);result={source};break;}
+   case'source.delete':{requireChief(actor);const source=s.sources.find(item=>item.id===p.id&&!item.deleted);if(!source)fail(404,'Deze bron bestaat niet.');db.prepare('DELETE FROM source_import_credentials WHERE source_id=?').run(source.id);Object.assign(source,{deleted:true,url:'',username:'',filterUrl:'',filterParameters:[],filterSummary:'',enabled:false,importConfigured:false,importEnabled:false});addFeed(s,actor,null,`Bron verwijderd: ${source.name}`);result={source};break;}
    case'source.import.rotate':{requireChief(actor);const source=managedImportSource(s,p.id),raw=token();db.prepare('INSERT INTO source_import_credentials(source_id,token_hash,enabled,created_at) VALUES(?,?,1,?) ON CONFLICT(source_id) DO UPDATE SET token_hash=excluded.token_hash,enabled=1,created_at=excluded.created_at').run(source.id,digest(raw),iso(Date.now()));Object.assign(source,{importConfigured:true,importEnabled:true,enabled:!!source.lastImportAt});addFeed(s,actor,null,`Nieuwe importsleutel ingesteld voor ${source.name}`);result={importToken:raw,sourceId:source.id,importUrl:new URL('/api/import/sources/'+encodeURIComponent(source.id)+'/leads',requestOrigin).href};break;}
    case'source.import.toggle':{requireChief(actor);const source=managedImportSource(s,p.id);if(typeof p.enabled!=='boolean')fail(400,'Geef aan of de import is ingeschakeld.');if(p.enabled&&!db.prepare('SELECT source_id FROM source_import_credentials WHERE source_id=?').get(source.id))fail(409,'Maak eerst een importsleutel voor deze bron.');db.prepare('UPDATE source_import_credentials SET enabled=? WHERE source_id=?').run(p.enabled?1:0,source.id);source.importEnabled=p.enabled;source.enabled=p.enabled&&!!source.lastImportAt;addFeed(s,actor,null,`Import ${p.enabled?'hervat':'gepauzeerd'} voor ${source.name}`);break;}
    case'source.import.revoke':{requireChief(actor);const source=managedImportSource(s,p.id);db.prepare('DELETE FROM source_import_credentials WHERE source_id=?').run(source.id);Object.assign(source,{importConfigured:false,importEnabled:false,enabled:false});addFeed(s,actor,null,`Importsleutel ingetrokken voor ${source.name}`);break;}
@@ -300,7 +326,7 @@ export function createApp(options={}){
   }
   writeState(s);const responseActor=s.users.find(u=>u.id===actor.id);const responseCompany=responseActor.role==='hoofdbeheerder'?cid:responseActor.companyId;return{...scoped(s,responseActor,responseCompany),...(result?{result}:{})};
  });}
- const assets=new Map([['/','index.html'],['/index.html','index.html'],['/login','index.html'],['/login/','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs']]);
+ const assets=new Map([['/','index.html'],['/index.html','index.html'],['/login','index.html'],['/login/','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs'],['/bouwberichten-filters.mjs','bouwberichten-filters.mjs']]);
  const contentTypes={'.html':'text/html; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
  function headers(res,isApi=false){res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");res.setHeader('Cache-Control',isApi?'no-store':'no-cache');if(secureCookies)res.setHeader('Strict-Transport-Security','max-age=31536000');}
  function json(res,status,data){headers(res,true);res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}

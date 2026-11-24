@@ -36,7 +36,11 @@ Logo's staan als binaire afbeeldingen in de SQLite-database op het persistente v
 
 ## Bronnen beheren
 
-De scraper-skill en beveiligde importvoorbereiding voor Bouwberichten.nl zijn beschikbaar. Zie [Scraper en import instellen](docs/SCRAPING_SETUP.md). Via **Import instellen** kan de hoofdbeheerder per bron een sleutel maken, vernieuwen, pauzeren of intrekken. De import herkent bestaande projecten en behoudt bedrijfsopvolging. Het echte projectoverzicht en de bronlogin moeten nog worden gevalideerd voordat de eerste echte scrape wordt gestart.
+De scraper-skill en beveiligde importvoorbereiding voor Bouwberichten.nl zijn beschikbaar. Zie [Scraper en import instellen](docs/SCRAPING_SETUP.md). Maak voor iedere selectie een aparte bron van type **Bouwberichten.nl** met een eigen naam en volledige filterlink, of kies **Filter als nieuwe bron** op een bestaande bronkaart. De samenvatting toont bijvoorbeeld **Gegund vanaf 01-01-2026**. Alleen een opgeslagen zoekopdracht-ID is onvoldoende; de link moet expliciete criteria bevatten.
+
+Via **Import instellen** kan de hoofdbeheerder per bron een sleutel maken, vernieuwen, pauzeren of intrekken. Gebruik voor hetzelfde Bouwberichten-project in alle filters hetzelfde externe ID: het blijft dan één centrale lead met meerdere bronlabels, gedeelde belwachttijd en behouden bedrijfsopvolging. Rapporten per bron kunnen overlappen; het bedrijfstotaal telt een lead één keer. Lidmaatschappen blijven historisch bewaard wanneer een project later niet meer in een filter wordt gevonden. Andere brontypen behouden hun eigen projectidentiteit per bron.
+
+Het aangemelde projectoverzicht en de opgegeven selectie zijn bekeken. Automatisch ophalen en een blijvende bronlogin zijn nog niet ingericht; een opgeslagen filter start geen scraper.
 
 De hoofdbeheerder kan bij **Bronnen & koppelingen** bronnen toevoegen, configureren en na bevestiging verwijderen. Geef een naam op en eventueel een bron-URL en gebruikersnaam. Opslaan maakt nog geen verbinding; nieuwe bronnen staan op **Niet gekoppeld**. Wachtwoorden en toegangstokens horen niet in deze velden.
 

@@ -2,11 +2,27 @@
 
 De skill `web-scraping` staat met alle upstream workflows, voorbeelden en MIT-licentie onder `.agents/skills/web-scraping`. `UPSTREAM.json` legt de oorspronkelijke versie vast. De aangepaste ingang gebruikt de beschikbare hulpmiddelen in deze omgeving; de upstream Proxy-MCP-tools worden niet door deze installatie toegevoegd.
 
-De beveiligde import is gereed. Het projectoverzicht, de bronlogin, selectors en een eventuele data-API van Bouwberichten.nl zijn nog niet gevalideerd. Er is nog geen Apify Actor gepubliceerd, planning ingeschakeld of echte brondata opgehaald. De volgende stap is de URL van het projectoverzicht en vaststellen of daarvoor moet worden ingelogd.
+De beveiligde import en afzonderlijke filterbronnen zijn gereed. Het aangemelde portaal is bekeken: de aangeleverde filterlink selecteert **Gegund vanaf 01-01-2026** en toonde op 24 november 2026 1.094 resultaten. De login is noodzakelijk. Een automatische extractie, de data-API en een blijvende bronsessie zijn nog niet gevalideerd. Er is nog geen Apify Actor gepubliceerd, planning ingeschakeld of echte brondata geïmporteerd.
+
+## Meerdere filters als bronnen
+
+Voeg bij **Bronnen & koppelingen → Bron toevoegen** een bron van type **Bouwberichten.nl** toe. Geef ieder filter een herkenbare naam en plak de volledige link uit het projectoverzicht, inclusief het gedeelte na `#`. Je kunt ook **Filter als nieuwe bron** op een bestaande bronkaart kiezen en de gekopieerde selectie aanpassen. Alleen opslaan wijzigt nog geen selectie in Bouwberichten.nl en start geen import.
+
+De eerste selectie is:
+
+```text
+https://portal.bouwberichten.nl/projecten#projects%5Bfilters%5D%5BlastPublishedAt%5D%5Bstart%5D=2025-12-31T23%3A00%3A00.000Z&projects%5Bfilters%5D%5BconstructionPhase%5D%5B%5D=Gegund
+```
+
+De UTC-starttijd in deze link is 1 januari 2026 om 00:00 in Nederland. De datumfilter gaat over **publicatie**, niet noodzakelijk over de datum van gunning. Het dashboard toont de leesbare samenvatting bij de bron. Gebruik expliciete filtercriteria: alleen een opgeslagen zoekopdracht-ID is onvoldoende, omdat het portaal dan een eerder gebruikte selectie kan overnemen. Tijdelijke loginlinks, wachtwoorden en toegangstokens worden hier niet opgeslagen.
+
+Iedere filterbron heeft een eigen importadres, token, pauzestand en importgeschiedenis. De scraper moet de opgeslagen selectie uitvoeren; de importserver haalt de filterlink niet zelf op en controleert geen publicatiedatum aan de hand van `sourceUpdatedAt`. Dat veld beschrijft een bronwijziging, geen publicatiedatum.
+
+Gebruik voor hetzelfde Bouwberichten-project in elk filter hetzelfde `externalId`. De import koppelt dat project dan aan meerdere bronnen, met één centrale lead en één gedeelde belwachttijd. Bedrijfsopvolging en oorspronkelijke aanmaakdatum blijven behouden. Het brontotaal kan door overlap hoger zijn dan het unieke totaal; een rapport met een gekozen bron rekent alleen de projecten uit die bron mee. Andere brontypen behouden een eigen identiteit per bron. Bestaande dubbele leads worden niet automatisch samengevoegd.
 
 ## Een bron aansluiten
 
-1. Log in als hoofdbeheerder en open **Bronnen & koppelingen → Bouwberichten.nl → Import instellen**. Gebruik de bestaande bron; de zichtbare naam kan zijn aangepast.
+1. Log in als hoofdbeheerder en open **Bronnen & koppelingen → de gewenste filterbron → Import instellen**. Controleer de bronnaam en filtersamenvatting.
 2. Kies **Importtoken maken**. Kopieer het getoonde importadres en token. Het token is alleen nu zichtbaar; de database bewaart alleen de hash.
 3. Bewaar bij de scraper twee geheime omgevingsvariabelen: `BOUWBERICHTEN_IMPORT_URL` en `BOUWBERICHTEN_IMPORT_TOKEN`. Dit kan later bij de Apify-job of een aparte scraper-service. Het dashboard heeft hiervoor geen nieuwe globale Railway-variabele nodig.
 4. Bewaar een eventuele Bouwberichten-login afzonderlijk in de geheimen van de scraper. Het importtoken is uitsluitend voor het dashboard, niet voor inloggen op Bouwberichten.nl.
@@ -70,7 +86,7 @@ De bronstatus in het dashboard toont de laatste geslaagde import, aantallen en e
 
 ## Gegevensbehoud en fouten
 
-Identiteit is gebonden aan bron plus extern project-ID. Een import bewaart de lead-ID, oorspronkelijke aanmaakdatum en rapportageperiode. Bedrijfsgebonden Kanban-statussen, verkopers, notities, belgeschiedenis, terugbelafspraken en conversievinkjes blijven behouden. Nieuwe geïmporteerde leads worden niet automatisch aan de hoofdbeheerder toegewezen.
+Identiteit is bij gewone bronnen gebonden aan bron plus extern project-ID; Bouwberichten-filterbronnen herkennen hetzelfde externe project gezamenlijk. Een import bewaart de lead-ID, oorspronkelijke aanmaakdatum en rapportageperiode. Bedrijfsgebonden Kanban-statussen, verkopers, notities, belgeschiedenis, terugbelafspraken en conversievinkjes blijven behouden. Nieuwe geïmporteerde leads worden niet automatisch aan de hoofdbeheerder toegewezen. Een eerder herkend project blijft historisch aan zijn filterbronnen gekoppeld: een latere lege of kleinere selectie verwijdert geen lidmaatschappen. Hiervoor is nog geen volledige synchronisatie met afmeldingen ingericht.
 
 Een ongeldige batch schrijft geen projecten, projectkoppelingen of geslaagde run weg. Een foutmelding mag wel op de bron worden geregistreerd. Een lege of mislukte scrape verwijdert geen bestaande leads; een lege invoerlijst wordt door het clientscript niet verzonden. Alleen het dashboard schrijft naar het persistente SQLite-volume.
 
