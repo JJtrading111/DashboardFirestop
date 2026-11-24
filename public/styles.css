@@ -102,9 +102,10 @@
 .auth-card .remember-login small,.auth-card .auth-remember small{display:block;font-size:14px;font-weight:400;line-height:1.6;color:#586f89;margin-top:2px}
 .auth-card .remember-login>small,.auth-card .auth-remember>small{grid-column:2}
 @media(max-width:400px){.auth-card .password-field{gap:6px}.auth-card .password-field .password-toggle{min-width:80px;padding-left:9px;padding-right:9px}.auth-card .remember-login,.auth-card .auth-remember{column-gap:8px}}
-.cooldown-duration{display:grid;grid-template-columns:minmax(0,2fr) minmax(120px,1fr);gap:16px}
-.cooldown-duration .field+.field{margin-top:0}
-.cooldown-duration .field{min-width:0}
+.cooldown-duration{display:grid;grid-template-columns:minmax(0,2fr) minmax(120px,1fr);align-items:start;gap:16px}
+#cooldown-form .cooldown-duration>.field{margin:0;min-width:0}
+#cooldown-form .cooldown-duration>.field>span{min-height:20px;line-height:20px}
+#cooldown-form .cooldown-duration input,#cooldown-form .cooldown-duration select{width:100%;height:44px;min-height:44px}
 #cooldown-help{margin-top:10px;margin-bottom:20px;font-size:14px}
 @media(max-width:400px){.cooldown-duration{grid-template-columns:minmax(0,1fr);gap:12px}}
 
