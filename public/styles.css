@@ -116,3 +116,30 @@
 .integration-card .source-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;width:100%;min-width:0;margin-top:auto}
 .integration-card .source-actions .button{margin-top:0;align-self:auto;flex:0 0 auto}
 .integration-grid>.source-empty{grid-column:1/-1}
+
+
+/* Source imports keep credentials within the open setup dialog. */
+.source-import-status{margin-bottom:14px}
+.import-connection,.import-token-box{min-width:0;margin:18px 0;padding:16px;background:#f6f9fd;border:1px solid #d7e2f0;border-radius:9px}
+.import-token-box{background:#edf4ff;border-color:#b6cdf4}
+.import-connection .field,.import-token-box .field{margin:0 0 8px}
+.import-copy-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:8px;min-width:0}
+.import-copy-row input{width:100%;min-width:0;min-height:44px;margin:0;background:#fff;color:#203b5a;font-size:14px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.import-copy-row .button{min-height:44px;align-self:stretch}
+.import-help{font-size:14px;line-height:1.65;color:#49627e;overflow-wrap:anywhere;margin:10px 0 0}
+.import-help code{font-size:12px;color:#254d83;white-space:normal;overflow-wrap:anywhere}
+.source-import-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:18px}
+.source-import-actions .button{min-height:44px}
+.source-import-footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;width:100%;min-width:0}
+.source-import-footer .button{min-height:44px;max-width:100%;white-space:normal;text-align:center}
+.import-summary{display:flex;flex-direction:column;gap:4px;margin:14px 0;color:#4e657f;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.integration-meta .import-summary{margin:5px 0 0}
+.import-error,.integration-card .import-error{margin:10px 0 16px;padding:10px 12px;color:#92342e;background:#fff2f0;border:1px solid #ecc3be;border-radius:7px;font-size:14px;line-height:1.6;flex:0 0 auto;overflow-wrap:anywhere}
+.import-example{margin-top:20px;padding-top:16px;border-top:1px solid #dce5f0}
+.import-example pre{max-width:100%;margin:12px 0 0;padding:14px;background:#10263f;color:#edf4ff;border-radius:8px;font-size:12px;line-height:1.65;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.missing-contact{display:flex;align-items:center;gap:8px;color:#526a83;font-size:14px;line-height:1.5;padding:6px 0}
+.missing-contact svg{width:17px;height:17px}
+.lead-source-link{margin:0 0 15px}
+.lead-source-link a{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.lead-source-link svg{width:15px;height:15px}
+@media(max-width:500px){.import-connection,.import-token-box{padding:12px}.import-copy-row{grid-template-columns:minmax(0,1fr)}.import-copy-row .button{justify-self:start}.source-import-actions .button{max-width:100%;white-space:normal;text-align:center}.contact-box>.split{flex-wrap:wrap}.missing-contact{width:100%}}

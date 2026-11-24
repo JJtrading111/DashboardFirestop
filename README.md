@@ -36,6 +36,8 @@ Logo's staan als binaire afbeeldingen in de SQLite-database op het persistente v
 
 ## Bronnen beheren
 
+De scraper-skill en beveiligde importvoorbereiding voor Bouwberichten.nl zijn beschikbaar. Zie [Scraper en import instellen](docs/SCRAPING_SETUP.md). Via **Import instellen** kan de hoofdbeheerder per bron een sleutel maken, vernieuwen, pauzeren of intrekken. De import herkent bestaande projecten en behoudt bedrijfsopvolging. Het echte projectoverzicht en de bronlogin moeten nog worden gevalideerd voordat de eerste echte scrape wordt gestart.
+
 De hoofdbeheerder kan bij **Bronnen & koppelingen** bronnen toevoegen, configureren en na bevestiging verwijderen. Geef een naam op en eventueel een bron-URL en gebruikersnaam. Opslaan maakt nog geen verbinding; nieuwe bronnen staan op **Niet gekoppeld**. Wachtwoorden en toegangstokens horen niet in deze velden.
 
 Actieve bronnen verschijnen bij het toevoegen van een lead, in filters en in rapportages en exports. Verwijderen haalt de bron uit het overzicht en uit de keuze voor nieuwe leads. Bestaande leads, notities, belgeschiedenis en conversies blijven aan de oorspronkelijke bron gekoppeld; die bron blijft met de aanduiding **verwijderd** beschikbaar in historische filters. De URL en gebruikersnaam worden bij verwijderen gewist. De toekomstige Outlook-koppeling kan eveneens uit het overzicht worden verwijderd.
