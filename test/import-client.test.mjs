@@ -30,3 +30,10 @@ test('import client does not retry authorization failures or expose server error
  assert.equal(requests,1);
  for(const bad of ['http://example.test/api/import/sources/bouw/leads','https://user:pass@example.test/api/import/sources/bouw/leads','https://example.test/api/action'])await assert.rejects(()=>sendImport({input:[item(1)],url:bad,token,fetchImpl:()=>assert.fail('Unsafe destination must not be called')}));
 });
+
+test('import client combines excluded totals across mixed batches without losing later ordinary counts',async()=>{
+ const input=Array.from({length:205},(_,i)=>item(i)),counts=[{created:98,updated:0,unchanged:0,excluded:2},{created:100,updated:0,unchanged:0},{created:0,updated:0,unchanged:0,excluded:5}];let calls=0;
+ const result=await sendImport({input,url,token,fetchImpl:async()=>Response.json({counts:counts[calls++]})});
+ assert.equal(calls,3);assert.equal(result.sent,205);assert.deepEqual(result.counts,{created:198,updated:0,unchanged:0,excluded:7});
+ for(const excluded of [-1,0.5,'2',null])await assert.rejects(()=>sendImport({input:[item(1)],url,token,fetchImpl:async()=>Response.json({counts:{created:0,updated:0,unchanged:0,excluded}})}),/geen geldige aantallen/);
+});

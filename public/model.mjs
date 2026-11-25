@@ -127,9 +127,11 @@ export function reportRows(state, { companyId = 'all', sellerId = 'all', source 
   // Amsterdam. Later notes, calls and conversion updates do not change membership.
   const rows = new Map();
   const companies = new Map([...(state.archivedCompanies || []), ...state.companies].map(company => [company.id, company]));
+  const leads = new Map([...(Array.isArray(state.archivedLeads) ? state.archivedLeads : []), ...state.leads]
+    .filter(lead => lead && typeof lead.id === 'string' && lead.id).map(lead => [lead.id, lead]));
   for (const company of companies.values()) {
     if (companyId !== 'all' && companyId !== company.id) continue;
-    for (const lead of state.leads) {
+    for (const lead of leads.values()) {
       if (!leadMatchesSource(lead, source)) continue;
       const workspace = state.workspaces[company.id]?.[lead.id];
       if (!workspace?.ownerId) continue;

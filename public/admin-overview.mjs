@@ -19,7 +19,8 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
  const pageLimit=Number.isSafeInteger(limit)?Math.max(1,Math.min(500,limit)):30;
  const selectedPeriod=['today','7d','30d','all'].includes(period)?period:'7d';
  const selectedType=['all','call','note','status','notes-status','followup','update','source','result'].includes(activityType)?activityType:'all';
- const leads=new Map(list(state?.leads).filter(lead=>validId(lead?.id)).map(lead=>[lead.id,lead]));
+ const activeLeads=new Map(list(state?.leads).filter(lead=>validId(lead?.id)).map(lead=>[lead.id,lead]));
+ const leads=new Map([...list(state?.archivedLeads),...activeLeads.values()].filter(lead=>validId(lead?.id)).map(lead=>[lead.id,lead]));
  const users=new Map(list(state?.users).filter(user=>validId(user?.id)).map(user=>[user.id,user]));
  const rows=new Map(list(state?.companies).filter(company=>validId(company?.id)).map(company=>[company.id,{
   id:company.id,name:words(company.name)||'Onbekend bedrijf',companyId:company.id,companyName:words(company.name)||'Onbekend bedrijf',
@@ -33,17 +34,17 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
  const actor=(snapshot,id)=>words(snapshot)||words(users.get(id)?.name)||'Onbekende gebruiker';
  const past=value=>Number.isFinite(time(value))&&time(value)<=instant;
  const mark=(row,at)=>{if(past(at)&&(!row.lastActivityAt||time(at)>time(row.lastActivityAt)))row.lastActivityAt=new Date(time(at)).toISOString();};
- const event=(type,row,lead,entry)=>({type,companyId:row?.id??null,companyName:row?.name??'Centrale bronnen',leadId:lead?.id??null,leadTitle:words(lead?.title),...entry});
+ const event=(type,row,lead,entry)=>({type,companyId:row?.id??null,companyName:row?.name??'Centrale bronnen',leadId:lead&&activeLeads.has(lead.id)?lead.id:null,leadTitle:words(lead?.title),...(lead&&!activeLeads.has(lead.id)?{archivedLead:true,archivedLeadId:lead.id}:{}),...entry});
  const normalizedFeed=list(state?.feed).filter(item=>item&&past(item.at)&&(!item.companyId||rows.has(item.companyId)));
  for(const user of users.values())if(user.status==='actief'&&rows.has(user.companyId))rows.get(user.companyId).activeUsers++;
- for(const feed of normalizedFeed){const row=rows.get(feed.companyId);if(row){mark(row,feed.at);if(leads.has(feed.leadId))worked.get(row.id).add(feed.leadId);}}
+ for(const feed of normalizedFeed){const row=rows.get(feed.companyId);if(row){mark(row,feed.at);if(activeLeads.has(feed.leadId))worked.get(row.id).add(feed.leadId);}}
 
  function addCall(row,lead,call,{fallback=false}={}){
   if(!call||!past(call.at))return;
   const signature=JSON.stringify([row.id,lead.id,new Date(time(call.at)).toISOString(),call.userId||'']);
   const key=JSON.stringify([row.id,lead.id,call.id||signature]);
   if(canonicalCalls.has(key)||fallback&&callSignatures.has(signature))return;
-  canonicalCalls.add(key);callSignatures.add(signature);worked.get(row.id).add(lead.id);
+  canonicalCalls.add(key);callSignatures.add(signature);if(activeLeads.has(lead.id))worked.get(row.id).add(lead.id);
   const callDay=localDay(time(call.at));row.totalCalls++;if(callDay===today)row.callsToday++;if(callDay>=weekStart)row.callsThisWeek++;mark(row,call.at);
   const actorName=actor(call.userName,call.userId),at=new Date(time(call.at)).toISOString();
   const item=event('call',row,lead,{id:'call:'+key,at,actorName,authorName:actorName,
@@ -55,7 +56,8 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
   for(const [leadId,w]of Object.entries(workspace)){
    const lead=leads.get(leadId);if(!lead||!w||typeof w!=='object')continue;
    const calls=list(w.calls),notes=list(w.notes),callbacks=list(w.callbacks);
-   if(w.ownerId||w.status&&w.status!==row.columns[0]?.id||w.priority&&w.priority!=='medium'||w.commitment||w.calculation||calls.length||notes.length||callbacks.length||words(w.contactName)||words(w.contactEmail)||words(w.contactPhone)||words(w.lastContactPerson)||words(w.selectedContact?.name))worked.get(id).add(leadId);
+   const active=activeLeads.has(leadId);
+   if(active&&(w.ownerId||w.status&&w.status!==row.columns[0]?.id||w.priority&&w.priority!=='medium'||w.commitment||w.calculation||calls.length||notes.length||callbacks.length||words(w.contactName)||words(w.contactEmail)||words(w.contactPhone)||words(w.lastContactPerson)||words(w.selectedContact?.name)))worked.get(id).add(leadId);
    if(words(w.selectedContact?.name))mark(row,w.selectedContact.selectedAt);
    for(const call of calls)addCall(row,lead,call);
    for(const note of notes){
@@ -66,7 +68,7 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
     const item=event('note',row,lead,{id:'note:'+JSON.stringify([id,leadId,note.id||at,actorName]),at,actorName,authorName:actorName,text:'Gespreksnotitie: '+words(lead.title),detail:words(note.text)});
     noteEvents.push(item);activity.push(item);
    }
-   for(const callback of callbacks){
+   for(const callback of active?callbacks:[]){
     if(!callback||callback.done||!Number.isFinite(time(callback.dueAt)))continue;
     row.openCallbacks++;
     if(time(callback.dueAt)>instant)continue;
@@ -74,7 +76,7 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
     const dueAt=new Date(time(callback.dueAt)).toISOString(),creatorName=actor(callback.creatorName,callback.creatorId),assigneeName=words(users.get(callback.assigneeId)?.name)||'Voormalige medewerker';
     attention.push(event('overdue',row,lead,{id:'callback:'+JSON.stringify([id,leadId,callback.id||dueAt]),kind:'callback',at:dueAt,dueAt,actorName:creatorName,authorName:creatorName,creatorName,assigneeName,text:words(callback.description)||'Terugbelafspraak verlopen'}));
    }
-   if(w.priority==='high'&&!w.ownerId){row.highPriorityUnassigned++;attention.push(event('unassigned',row,lead,{id:'unassigned:'+JSON.stringify([id,leadId]),kind:'unassigned',at:null,actorName:'',authorName:'',assigneeName:'Niet toegewezen',text:'Hoge prioriteit zonder verantwoordelijke verkoper'}));}
+   if(active&&w.priority==='high'&&!w.ownerId){row.highPriorityUnassigned++;attention.push(event('unassigned',row,lead,{id:'unassigned:'+JSON.stringify([id,leadId]),kind:'unassigned',at:null,actorName:'',authorName:'',assigneeName:'Niet toegewezen',text:'Hoge prioriteit zonder verantwoordelijke verkoper'}));}
    for(const [field,metric,label]of [['commitment','commitments','Toezegging ontvangen'],['calculation','calculations','Klaar voor calculatie']]){
     if(!w[field])continue;
     row[metric]++;
@@ -90,7 +92,7 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
  const eventIndex=items=>{
   const index=new Map();
   for(const item of items)for(const name of ['',item.actorName]){
-   const key=JSON.stringify([item.companyId,item.leadId,name]);if(!index.has(key))index.set(key,[]);index.get(key).push(time(item.at));
+   const key=JSON.stringify([item.companyId,item.leadId||item.archivedLeadId,name]);if(!index.has(key))index.set(key,[]);index.get(key).push(time(item.at));
   }
   for(const values of index.values())values.sort((a,b)=>a-b);
   return index;
@@ -122,7 +124,7 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
  }
  const companies=[...rows.values()].sort((a,b)=>a.name.localeCompare(b.name,'nl')||a.id.localeCompare(b.id));
  const keys=['activeUsers','workedLeads','totalCalls','callsToday','callsThisWeek','notesCount','openCallbacks','overdueCallbacks','commitments','calculations','highPriorityUnassigned'];
- const totals={centralLeads:leads.size,companyCount:companies.length,...Object.fromEntries(keys.map(key=>[key,companies.reduce((total,row)=>total+row[key],0)]))};
+ const totals={centralLeads:activeLeads.size,companyCount:companies.length,...Object.fromEntries(keys.map(key=>[key,companies.reduce((total,row)=>total+row[key],0)]))};
  const firstDay=selectedPeriod==='today'?today:shiftedDay(today,selectedPeriod==='30d'?-29:-6);
  const matchesType=item=>selectedType==='all'||(selectedType==='notes-status'?['note','status'].includes(item.type):item.type===selectedType);
  const filtered=activity.filter(item=>(companyId==='all'||item.companyId===companyId)&&matchesType(item)&&(selectedPeriod==='all'||localDay(time(item.at))>=firstDay)).sort(sortLatest);

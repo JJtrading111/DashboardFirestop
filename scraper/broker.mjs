@@ -240,7 +240,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
    if(existing){if(existing.payload_hash!==fingerprint)fail(409,'Deze ophaalbatch is al anders verwerkt.');return{counts:JSON.parse(existing.counts_json)};}
    if(job.status!=='running'||job.processed+p.items.length>maximum)fail(400,'Deze ophaalopdracht bevat te veel projecten.');
    const result=importBatch({sourceId:job.source_id,tokenHash:credential.token_hash},{runId:`${id}:${p.batch}`,items:p.items});
-   transaction(()=>{const counts=JSON.parse(job.counts_json);for(const k of ['created','updated','unchanged'])counts[k]+=result.counts[k];db.prepare('INSERT INTO scraper_batches(job_id,batch,payload_hash,counts_json,items_count) VALUES(?,?,?,?,?)').run(id,p.batch,fingerprint,JSON.stringify(result.counts),p.items.length);db.prepare('UPDATE scraper_jobs SET processed=processed+?,counts_json=? WHERE id=?').run(p.items.length,JSON.stringify(counts),id);});
+   transaction(()=>{const counts=JSON.parse(job.counts_json);for(const k of ['created','updated','unchanged'])counts[k]+=result.counts[k];if(result.counts.excluded)counts.excluded=(counts.excluded||0)+result.counts.excluded;db.prepare('INSERT INTO scraper_batches(job_id,batch,payload_hash,counts_json,items_count) VALUES(?,?,?,?,?)').run(id,p.batch,fingerprint,JSON.stringify(result.counts),p.items.length);db.prepare('UPDATE scraper_jobs SET processed=processed+?,counts_json=? WHERE id=?').run(p.items.length,JSON.stringify(counts),id);});
    return{counts:result.counts};
   }
   if(kind==='progress'){
@@ -274,6 +274,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
    try{diagnostic=safeDiagnostic(JSON.parse(job.error_details_json));}catch{}
    try{storedCounts=JSON.parse(job.counts_json);}catch{}
    const counts=Object.fromEntries(['created','updated','unchanged'].map(key=>[key,Number.isSafeInteger(storedCounts?.[key])&&storedCounts[key]>=0&&storedCounts[key]<=10000000?storedCounts[key]:0]));
+   if(Number.isSafeInteger(storedCounts?.excluded)&&storedCounts.excluded>0&&storedCounts.excluded<=10000000)counts.excluded=storedCounts.excluded;
    const code=['login_required','source_error','scrape_error','lease_expired','legacy_unknown','cancelled'].includes(job.error_code)?job.error_code:job.status==='failed'?'legacy_unknown':job.status==='cancelled'?'cancelled':null;
    const blocked=retryBlocked(job,entry,cfg);
    return{id:job.id,sourceId:job.source_id,sourceName:entry?.name||'Verwijderde bron',mode:job.mode,status:job.status,

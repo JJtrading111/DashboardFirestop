@@ -39,8 +39,8 @@ function modalFixture(){
  for(const selector of ['[type=submit]','[type="submit"]'])form.children.set(selectorKey(selector),submit);
  form.children.set('[name=username]',username);form.children.set('[name=password]',password);
  const fields=new Map();
- for(const hook of ['status','worker','missing-filter','unavailable','offline','action-error','plan-help','schedule-error','started','finished','processed-label','processed','counts','empty','source-error','filter-summary','filter-link','filter-url']){const field=node(hook);fields.set(hook,field);modal.children.set('[data-scraper-'+hook+']',field);}
- for(const count of ['created','updated','unchanged']){const field=node('count-'+count);fields.set('count-'+count,field);modal.children.set('[data-scraper-count='+count+']',field);}
+ for(const hook of ['status','worker','missing-filter','unavailable','offline','action-error','plan-help','schedule-error','started','finished','processed-label','processed','counts','excluded','empty','source-error','filter-summary','filter-link','filter-url']){const field=node(hook);fields.set(hook,field);modal.children.set('[data-scraper-'+hook+']',field);}
+ for(const count of ['created','updated','unchanged','excluded']){const field=node('count-'+count);fields.set('count-'+count,field);modal.children.set('[data-scraper-count='+count+']',field);}
  const title=node('title');fields.set('title',title);modal.children.set('#modal-title',title);modal.children.set('#source-scraper-form',form);modal.children.set('.modal-body',body);modal.children.set('[data-scraper-schedule]',schedule);modal.children.set('.modal-header h2',title);
  modal.children.set('[data-scraper-time]',time);modal.children.set('#scraper-daily-time',time);modal.children.set('[data-action=save-source-scraper-time]',saveTime);
  for(const action of ['test-source-scraper','run-source-scraper','disconnect-source-scraper'])modal.children.set('[data-action='+action+']',node(action));
@@ -93,6 +93,14 @@ test('a newer thirty-second response wins over an outstanding ten-second respons
  await f.respond(1,f.snapshot({status:'test_passed',lastTestPassed:true,lastProcessed:5,lastTotal:24,lastCounts:{created:5,updated:0,unchanged:0}}));await newer;
  await f.respond(0,f.snapshot({status:'running',lastProcessed:1,lastTotal:24}));await old;
  f.assertPreserved();assert.equal(f.context.inspectState().sources[0].scraper.lastProcessed,5);assert.match(f.fields.get('status').textContent,/Proef geslaagd/);assert.equal(f.fields.get('count-created').textContent,'5');assert.deepEqual(f.messages,[]);
+});
+
+test('polling shows excluded projects without rebuilding the login form and clears their display for a later ordinary round',async()=>{
+ const f=modalFixture(),polling=f.poll(10000);
+ await f.respond(0,f.snapshot({status:'test_passed',lastTestPassed:true,lastProcessed:5,lastTotal:5,lastCounts:{created:0,updated:0,unchanged:0,excluded:5}}));await polling;
+ f.assertPreserved();assert.equal(f.fields.get('excluded').hidden,false);assert.equal(f.fields.get('count-excluded').textContent,'5');assert.equal(f.fields.get('counts').hidden,false);assert.deepEqual(f.messages,[]);
+ const next=f.poll(10000);await f.respond(1,f.snapshot({status:'test_passed',lastTestPassed:true,lastProcessed:1,lastTotal:1,lastCounts:{created:1,updated:0,unchanged:0}}));await next;
+ f.assertPreserved();assert.equal(f.fields.get('excluded').hidden,true);assert.equal(f.fields.get('count-excluded').textContent,'0');assert.deepEqual(f.messages,[]);
 });
 
 test('a thirty-second refresh started before opening the dialog preserves it when its response renders the dashboard',async()=>{

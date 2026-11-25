@@ -56,10 +56,11 @@ export async function sendImport({input,runId,url,token,dryRun=false,fetchImpl=f
    if([429,500,502,503,504].includes(response.status)&&attempt<2){await sleep(500*2**attempt);continue;}
    if(!response.ok)throw Error(`Import geweigerd (HTTP ${response.status}). Controleer de bronstatus, importsleutel en invoer.`);
    try{result=await response.json();}catch{throw Error('De importserver gaf geen geldig antwoord.');}
-   if(!result?.counts||['created','updated','unchanged'].some(k=>!Number.isInteger(result.counts[k])||result.counts[k]<0))throw Error('De importserver gaf geen geldige aantallen terug.');
+   if(!result?.counts||['created','updated','unchanged'].some(k=>!Number.isSafeInteger(result.counts[k])||result.counts[k]<0)||result.counts.excluded!==undefined&&(!Number.isSafeInteger(result.counts.excluded)||result.counts.excluded<0))throw Error('De importserver gaf geen geldige aantallen terug.');
    break;
   }
-  for(const key of Object.keys(totals))totals[key]+=result.counts[key];
+  for(const key of ['created','updated','unchanged'])totals[key]+=result.counts[key];
+  if(result.counts.excluded)totals.excluded=(totals.excluded||0)+result.counts.excluded;
  }
  return{dryRun:false,total:prepared.total,batches:prepared.batches.length,sent:prepared.total,counts:totals};
 }

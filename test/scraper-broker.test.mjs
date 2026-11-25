@@ -95,6 +95,30 @@ test('a five-project proof imports idempotently, gates full/daily runs and survi
  await env.restart();assert.equal((await state(owner)).leads.length,5);assert.equal((await state(owner)).sources.find(s=>s.id==='bouw').scraper.status,'login_required');
 });
 
+test('scraper rounds retain excluded-project totals and finish successfully even when every project was removed',async t=>{
+ const env=await fixture();t.after(()=>env.close());const owner=await configure(env),item=jobItem('excluded');
+ const proof=ok(await worker(env,'claim')).job;
+ ok(await worker(env,`jobs/${proof.id}/progress`,{leaseToken:proof.leaseToken,processed:0,total:1}));
+ ok(await worker(env,`jobs/${proof.id}/batch`,{leaseToken:proof.leaseToken,batch:0,items:[item]}));
+ ok(await worker(env,`jobs/${proof.id}/finish`,{leaseToken:proof.leaseToken,processed:1,total:1}));
+ const removed=(await state(owner)).leads[0];ok(await owner.action('lead.delete',{leadId:removed.id,confirmed:true,reason:'Geen werkzaamheden voor de groep'}));
+ for(const items of [[item,jobItem('retained')],[item]]){
+  ok(await owner.action('source.scraper.run',{id:'bouw'}));const job=ok(await worker(env,'claim')).job;
+  ok(await worker(env,`jobs/${job.id}/progress`,{leaseToken:job.leaseToken,processed:0,total:items.length}));
+  const batch={leaseToken:job.leaseToken,batch:0,items},result=ok(await worker(env,`jobs/${job.id}/batch`,batch));
+  assert.deepEqual(result.counts,{created:items.length-1,updated:0,unchanged:0,excluded:1});
+  assert.deepEqual(ok(await worker(env,`jobs/${job.id}/batch`,batch)),result);
+  assert.deepEqual(ok(await worker(env,`jobs/${job.id}/finish`,{leaseToken:job.leaseToken,processed:items.length,total:items.length})).counts,result.counts);
+  const current=await state(owner),summary=current.sources.find(source=>source.id==='bouw').scraper;
+  assert.deepEqual(summary.lastCounts,result.counts);assert.equal(summary.lastProcessed,items.length);assert.equal(summary.status,'test_passed');assert.equal(summary.lastError,null);
+  assert.equal(current.leads.some(lead=>lead.id===removed.id),false);assert.equal(current.archivedLeads.length,1);
+  const entries=ok(await owner.request('/api/source-logbook')).entries;
+  assert.deepEqual(entries.find(entry=>entry.id===job.id).counts,result.counts);
+ }
+ await env.restart();const summary=(await state(owner)).sources.find(source=>source.id==='bouw').scraper;
+ assert.equal(summary.lastCounts.excluded,1);assert.equal(summary.lastCounts.created,0);assert.equal(summary.lastError,null);
+});
+
 test('filter changes, import pause and disconnect cancel leases without deleting imported follow-up',async t=>{
  const env=await fixture();t.after(()=>env.close());const owner=await configure(env);let job=ok(await worker(env,'claim')).job;
  ok(await worker(env,`jobs/${job.id}/batch`,{leaseToken:job.leaseToken,batch:0,items:[jobItem(1)]}));const lead=(await state(owner)).leads[0];ok(await owner.action('note.add',{leadId:lead.id,text:'Bestaande opvolging'}));

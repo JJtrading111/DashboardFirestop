@@ -100,6 +100,8 @@ Een geslaagde import geeft:
 
 De bronstatus in het dashboard toont de laatste geslaagde import, aantallen en een gesaniteerde foutmelding. **Import gereed** betekent dat een sleutel klaarstaat; **Import actief** verschijnt pas na een geslaagde aanlevering. Dat is nog geen bewijs dat een automatische scrapeplanning draait.
 
+Als de hoofdbeheerder een project via **Verwijder lead compleet** heeft verwijderd, slaat de server die bronidentiteit blijvend over. Het optionele positieve veld `counts.excluded` telt deze projecten; bij nul wordt het veld weggelaten. De drie bestaande tellers behouden hun betekenis. De client telt uitgesloten projecten over alle batches op. Ook een batch of ophaalronde met uitsluitend uitgesloten projecten slaagt. Voor Bouwberichten geldt de uitsluiting op platform plus extern ID over alle huidige en toekomstige filterbronnen; andere bronnen gebruiken bron plus extern ID. De uitsluiting blijft werken na een herstart, sleutelvernieuwing en herhaalde batches. Opgeslagen bedrijfsopvolging en rapportages blijven bewaard.
+
 ## Gegevensbehoud en fouten
 
 Identiteit is bij gewone bronnen gebonden aan bron plus extern project-ID; Bouwberichten-filterbronnen herkennen hetzelfde externe project gezamenlijk. Een import bewaart de lead-ID, oorspronkelijke aanmaakdatum en rapportageperiode. Bedrijfsgebonden Kanban-statussen, verkopers, notities, belgeschiedenis, terugbelafspraken en conversievinkjes blijven behouden. Nieuwe geïmporteerde leads worden niet automatisch aan de hoofdbeheerder toegewezen. Een eerder herkend project blijft historisch aan zijn filterbronnen gekoppeld: een latere lege of kleinere selectie verwijdert geen lidmaatschappen. Hiervoor is nog geen volledige synchronisatie met afmeldingen ingericht.

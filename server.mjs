@@ -167,6 +167,7 @@ export function createApp(options={}){
  CREATE TABLE IF NOT EXISTS source_import_status(source_id TEXT PRIMARY KEY,last_import_at TEXT,counts_json TEXT,last_error TEXT);
  CREATE TABLE IF NOT EXISTS source_items(source_id TEXT NOT NULL,external_id TEXT NOT NULL,lead_id TEXT NOT NULL,imported_json TEXT NOT NULL,PRIMARY KEY(source_id,external_id));
  CREATE TABLE IF NOT EXISTS provider_items(provider TEXT NOT NULL,external_id TEXT NOT NULL,lead_id TEXT NOT NULL,PRIMARY KEY(provider,external_id));
+ CREATE TABLE IF NOT EXISTS lead_import_exclusions(provider TEXT NOT NULL,scope_id TEXT NOT NULL,external_id TEXT NOT NULL,lead_id TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(provider,scope_id,external_id));
  CREATE TABLE IF NOT EXISTS import_runs(source_id TEXT NOT NULL,run_id TEXT NOT NULL,payload_hash TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(source_id,run_id));
  CREATE TABLE IF NOT EXISTS import_errors(id TEXT PRIMARY KEY,source_id TEXT NOT NULL,created_at TEXT NOT NULL,status INTEGER NOT NULL,message TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
@@ -174,6 +175,14 @@ export function createApp(options={}){
  const readState=()=>{const s=JSON.parse(db.prepare('SELECT json FROM app_state WHERE id=1').get().json);s.settings.cooldownUnit=s.settings.cooldownUnit==='days'?'days':'hours';const credentials=new Map(db.prepare('SELECT source_id,enabled FROM source_import_credentials').all().map(row=>[row.source_id,row])),statuses=new Map(db.prepare('SELECT * FROM source_import_status').all().map(row=>[row.source_id,row]));for(const source of s.sources){const credential=credentials.get(source.id),status=statuses.get(source.id);source.provider=sourceProvider(source);source.filterUrl??='';source.filterParameters??=[];source.filterSummary??='';source.importConfigured=!source.deleted&&!!credential;source.importEnabled=source.importConfigured&&!!credential.enabled;source.lastImportAt=status?.last_import_at??null;source.lastImportCounts=status?.counts_json?JSON.parse(status.counts_json):null;source.lastImportError=status?.last_error??null;source.enabled=source.importEnabled&&!!source.lastImportAt;}return s;};
  const writeState=s=>{const copy={...s,invitations:[]};db.prepare('INSERT INTO app_state(id,json) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(JSON.stringify(copy));};
  const transaction=fn=>{db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}};
+ function excludeLeadImports(s,lead,deletedAt){
+  const insert=db.prepare('INSERT OR IGNORE INTO lead_import_exclusions(provider,scope_id,external_id,lead_id,deleted_at) VALUES(?,?,?,?,?)');
+  const exclude=(provider,sourceId,externalId)=>{if(externalId)insert.run(provider,provider==='bouwberichten'?'':sourceId,externalId,lead.id,deletedAt);};
+  for(const mapping of db.prepare('SELECT source_id,external_id FROM source_items WHERE lead_id=?').all(lead.id))exclude(sourceProvider(s.sources.find(source=>source.id===mapping.source_id)),mapping.source_id,mapping.external_id);
+  for(const mapping of db.prepare('SELECT provider,external_id FROM provider_items WHERE lead_id=?').all(lead.id))exclude(mapping.provider,'',mapping.external_id);
+  if(lead.importExternalId&&lead.source)exclude(sourceProvider(s.sources.find(source=>source.id===lead.source)),lead.source,lead.importExternalId);
+  return Number(db.prepare('SELECT COUNT(*) AS count FROM lead_import_exclusions WHERE lead_id=?').get(lead.id).count);
+ }
  function removeDemoLeads(s,actor,cid){
   const demoLeads=s.leads.filter(lead=>lead.demo===true),removedIds=new Set(demoLeads.map(lead=>lead.id));
   if(removedIds.size){
@@ -274,8 +283,9 @@ export function createApp(options={}){
   // Transferred owners remain as anonymous historical labels; never expose their new company or email.
   for(const historicId of referenced)if(!own.some(u=>u.id===historicId)){const original=s.users.find(u=>u.id===historicId);own.push({id:historicId,name:original?.name||'Voormalige medewerker',email:'',companyId:null,role:'verkoper',status:'historisch'});}
   const latest=new Map();for(const call of s.callLog){const old=latest.get(call.leadId);if(!old||Date.parse(call.at)>Date.parse(old.at))latest.set(call.leadId,call);}
-  const {archivedCompanies,...ownState}=s;
-  return{state:{...ownState,companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
+  const {archivedCompanies,archivedLeads,...ownState}=s;
+  const reportArchive=(archivedLeads||[]).filter(lead=>s.workspaces[actor.companyId]?.[lead.id]).map(lead=>({id:lead.id,source:lead.source,...(Array.isArray(lead.sourceIds)?{sourceIds:[...lead.sourceIds]}:{}),createdAt:lead.createdAt}));
+  return{state:{...ownState,...(reportArchive.length?{archivedLeads:reportArchive}:{}),companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
  }
  function requireCompany(s,cid){const c=s.companies.find(c=>c.id===cid);if(!c)fail(404,'Dit bedrijf bestaat niet.');return c;}
  function accountCompany(s,role,value){
@@ -323,6 +333,7 @@ export function createApp(options={}){
    const previousRun=db.prepare('SELECT * FROM import_runs WHERE source_id=? AND run_id=?').get(source.id,runId);if(previousRun){if(previousRun.payload_hash!==payloadHash)fail(409,'Dit import-run-ID is al gebruikt voor een andere batch.');return JSON.parse(previousRun.result_json);}
    const now=iso(Date.now()),counts={created:0,updated:0,unchanged:0},actor={name:'Import: '+source.name};
    for(const item of items){
+    if(db.prepare('SELECT 1 FROM lead_import_exclusions WHERE provider=? AND scope_id=? AND external_id=?').get(source.provider,source.provider==='bouwberichten'?'':source.id,item.externalId)){counts.excluded=(counts.excluded||0)+1;continue;}
     const shared=source.provider==='bouwberichten',own=db.prepare('SELECT * FROM source_items WHERE source_id=? AND external_id=?').get(source.id,item.externalId);let existing=own,identity;
     if(shared){
      identity=db.prepare('SELECT * FROM provider_items WHERE provider=? AND external_id=?').get('bouwberichten',item.externalId);
@@ -378,8 +389,18 @@ export function createApp(options={}){
   const raw=token(),now=Date.now(),iid=id('invite');db.prepare('INSERT INTO invitations(id,token_hash,email,name,company_id,role,user_id,created_at,expires_at,status,creator_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(iid,digest(raw),email,name,cid??'',role,null,now,now+INVITE_AGE,'pending',actor.id);const invitation=invitationPublic(db.prepare('SELECT * FROM invitations WHERE id=?').get(iid),s);addFeed(s,actor,cid,`Uitnodiging voorbereid voor ${name}`);return{invitation,token:raw};
  }
  function action(actor,type,cid,p,requestOrigin){return transaction(()=>{
-  const s=readState(),fresh=s.users.find(u=>u.id===actor.id&&u.status==='actief');if(!fresh)fail(401,'Meld je opnieuw aan.');actor=fresh;const withoutCompany=actor.role==='hoofdbeheerder'&&!cid&&!s.companies.length&&/^(?:company\.|user\.update$|source\.|settings\.update$|invitation\.|demo\.remove$)/.test(type),company=withoutCompany?null:requireCompany(s,cid);if(actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je kunt alleen je eigen bedrijf wijzigen.');let result;
+  const s=readState(),fresh=s.users.find(u=>u.id===actor.id&&u.status==='actief');if(!fresh)fail(401,'Meld je opnieuw aan.');actor=fresh;const withoutCompany=actor.role==='hoofdbeheerder'&&!cid&&!s.companies.length&&/^(?:company\.|user\.update$|source\.|settings\.update$|invitation\.|demo\.remove$|lead\.delete$)/.test(type),company=withoutCompany?null:requireCompany(s,cid);if(actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je kunt alleen je eigen bedrijf wijzigen.');let result;
   switch(type){
+   case'lead.delete':{
+    requireChief(actor);const leadId=text(p.leadId,'Lead',100),reason=p.reason===undefined?'':text(p.reason,'Reden',1000,0);
+    if(p.confirmed!==true)fail(400,'Bevestig eerst dat je deze lead voor alle bedrijven wilt verwijderen.');
+    const lead=s.leads.find(item=>item.id===leadId),archived=s.archivedLeads?.find(item=>item.id===leadId);
+    if(!lead){if(!archived)fail(404,'Deze lead bestaat niet.');result={deleted:true,alreadyDeleted:true,leadId,exclusions:Number(db.prepare('SELECT COUNT(*) AS count FROM lead_import_exclusions WHERE lead_id=?').get(leadId).count)};break;}
+    const deletedAt=iso(Date.now()),exclusions=excludeLeadImports(s,lead,deletedAt);
+    s.archivedLeads??=[];s.archivedLeads.push({...lead,deletedAt,deletedById:actor.id,deletedByName:actor.name,deletionReason:reason});s.leads=s.leads.filter(item=>item.id!==leadId);
+    addFeed(s,actor,null,`Centrale lead verwijderd: ${lead.title}. Rapportages blijven bewaard.`);
+    result={deleted:true,alreadyDeleted:false,leadId,exclusions};break;
+   }
    case'demo.remove':{
     requireChief(actor);
     result=removeDemoLeads(s,actor,cid);
@@ -543,7 +564,7 @@ export function createApp(options={}){
    if(req.method==='GET'&&url.pathname==='/api/session'){const session=cookieSession(req);return json(res,200,session?sessionBody(session):{authenticated:false});}
    const leadImageRoute=/^\/api\/lead-images\/(lead-[0-9a-f-]{36})$/.exec(url.pathname);
    if(leadImageRoute&&['GET','HEAD'].includes(req.method)){
-    authorized(req);const image=db.prepare('SELECT mime,bytes,version FROM lead_images WHERE lead_id=?').get(leadImageRoute[1]);
+    authorized(req);requireLead(readState(),leadImageRoute[1]);const image=db.prepare('SELECT mime,bytes,version FROM lead_images WHERE lead_id=?').get(leadImageRoute[1]);
     if(!image||url.searchParams.get('v')!==image.version)fail(404,'Deze projectimpressie bestaat niet.');
     const bytes=Buffer.from(image.bytes);
     res.writeHead(200,{'Content-Type':image.mime,'Content-Length':bytes.length,'Cache-Control':'private, no-store'});
