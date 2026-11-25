@@ -88,7 +88,7 @@ test('chief company management, deletion safeguards and persistent logo branding
   const f=await fixture(t);await f.action('user.update',{userId:f.current.user.id,role:'hoofdbeheerder',companyId:null});await f.page.reload();await f.page.locator('[data-company-card]').first().waitFor({state:'visible'});
   const ids=await f.page.locator('[data-company-card]').evaluateAll(cards=>cards.map(card=>card.getAttribute('data-company-card')));for(const id of ids)await confirm(f,id);
   await f.page.locator('.company-grid').filter({hasText:'Nog geen bedrijven'}).waitFor({state:'visible'});assert.match(await f.page.locator('.sidebar .brand').innerText(),/Hoofdbeheer/);
-  await f.page.goto(origin+'/#dashboard');await f.page.locator('[data-admin-attention-section]').waitFor({state:'visible'});
+  await f.page.goto(origin+'/#all-companies');await f.page.locator('[data-admin-attention-section]').waitFor({state:'visible'});
   await f.page.goto(origin+'/#leads');assert.match(await f.page.locator('#main').innerText(),/Voeg een bedrijf toe/);
   await f.page.locator('[data-action="new-company"]').click();await f.page.locator('#company-form [name="name"]').fill('Nieuwe werkplek');await f.page.locator('#company-form [type="submit"]').click();await f.page.locator('#company-form').waitFor({state:'detached'});assert.equal(await f.page.locator('#company-switch option').count(),1);assert.deepEqual(f.errors,[]);
  });

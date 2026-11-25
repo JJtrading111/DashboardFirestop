@@ -84,7 +84,7 @@ test('the chief start page prioritizes follow-up, company and employee calls, no
    if(gate){gate.started();await gate.released;}
    try{await intercepted.fulfill({status:response.status,headers:response.headers,body:response.bytes});}catch(error){if(!request.failure())throw error;}finally{gate?.finished();}
   });
-  await page.goto(origin+'/#dashboard');await page.locator('.app-shell').waitFor({state:'visible'});
+  await page.goto(origin+'/#'+(role==='hoofdbeheerder'?'all-companies':'dashboard'));await page.locator('.app-shell').waitFor({state:'visible'});
   return{page,south,empty,northLead,southLead,sharedLead,noor,bas,zero,weekExtra,action,snapshot,dispatch,current,errors,requests,
    card:id=>page.locator('.admin-company-card[data-company-id="'+id+'"]'),
    async global(){await page.goto(origin+'/#all-companies');await page.locator('#main').waitFor({state:'visible'});},

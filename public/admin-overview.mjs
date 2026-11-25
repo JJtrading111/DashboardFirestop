@@ -1,4 +1,6 @@
 import {callOutcomeNames} from './model.mjs';
+export {buildControlekamer} from './controlekamer-model.mjs';
+export {renderControlekamer,enhanceControlekamer,updateControlekamerClock} from './controlekamer.mjs';
 
 const DAY=86400000;
 const list=value=>Array.isArray(value)?value:[];

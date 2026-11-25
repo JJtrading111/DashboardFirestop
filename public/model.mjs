@@ -1,4 +1,4 @@
-export {buildAdminOverview} from './admin-overview.mjs';
+export {buildAdminOverview,buildControlekamer,renderControlekamer,enhanceControlekamer,updateControlekamerClock} from './admin-overview.mjs';
 export {effectiveLeadContact,hasLeadContact,contactFingerprint,partyContact} from './selected-contact.mjs';
 export {buildCallReport} from './call-report.mjs';
 

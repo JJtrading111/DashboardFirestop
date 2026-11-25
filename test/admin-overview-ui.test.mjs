@@ -79,7 +79,7 @@ test('the chief overview shows all company work and history through the real API
    if(gate){gate.started();await gate.released;}
    try{await intercepted.fulfill({status:response.status,headers:response.headers,body:response.bytes});}catch(error){if(!request.failure())throw error;}finally{gate?.finished();}
   });
-  await page.goto(origin+'/#dashboard');await page.locator('.app-shell').waitFor({state:'visible'});
+  await page.goto(origin+'/#'+(role==='hoofdbeheerder'?'all-companies':'dashboard'));await page.locator('.app-shell').waitFor({state:'visible'});
   return{page,south,empty,northLead,southLead,sharedLead,noor,bas,action,snapshot,dispatch,current,errors,requests,
    card:id=>page.locator('.admin-company-card[data-company-id="'+id+'"]'),
    async global(){await page.goto(origin+'/#all-companies');await page.locator('#main').waitFor({state:'visible'});},
@@ -137,7 +137,7 @@ test('the chief overview shows all company work and history through the real API
   const f=await fixture(t);await select(f,'type','note');const text='Nieuwe opvolging van Bas verschijnt in het gezamenlijke overzicht.';
   await f.action('note.add',{leadId:f.southLead.id,text},f.south.id,f.bas.headers);
   await f.page.locator('#main h1').click();await f.page.evaluate(()=>{window.__overviewTimers.find(timer=>timer.ms===30000).callback();});
-  await activities(f).filter({hasText:text}).waitFor({state:'visible'});assert.equal(await filter(f,'type').inputValue(),'note');assert.equal(new URL(f.page.url()).hash,'#dashboard');assert.deepEqual(f.errors,[]);
+  await activities(f).filter({hasText:text}).waitFor({state:'visible'});assert.equal(await filter(f,'type').inputValue(),'note');assert.equal(new URL(f.page.url()).hash,'#all-companies');assert.deepEqual(f.errors,[]);
  });
  for(const role of ['verkoper','bedrijfsbeheerder'])await t.test(role+' retains the own-company overview and cannot open global work history',async t=>{
   const f=await fixture(t,{role});assert.equal(await f.page.locator('.admin-overview,[data-route="all-companies"]').count(),0);await f.global();

@@ -2,7 +2,26 @@
 
 Nederlandstalig leadbeheer met een centrale leadvoorraad en eigen opvolging per bedrijf. Leads openen in een gecentreerde pop-up. De applicatie bevat Kanban, notities, bellijsten, terugbelafspraken, conversierapportages, bedrijfsbeheer en echte gebruikersaccounts.
 
-De hoofdbeheerder start op **Alle bedrijven in beeld** en kan hetzelfde overzicht openen via **Beheer → Alle bedrijven**. **Nu aandacht nodig** staat bovenaan: verlopen terugbelafspraken, hoge prioriteiten zonder verantwoordelijke en ophaalfouten van bronnen. Daaronder staan de belmomenten per bedrijf en per medewerker, met **Vandaag** of **Deze week** als snelle keuze. Nulactiviteiten blijven zichtbaar. De samenvatting toont vandaag, de huidige kalenderweek en het aantal medewerkers met belmomenten in de gekozen periode. Een klik op een medewerker of bedrijfsrapport opent de passende belrapportage met dezelfde periode. Deze week begint op maandag in `Europe/Amsterdam`.
+De hoofdbeheerder start op de **Controlekamer** (`#dashboard`), met de kop **Alles in één oogopslag**. De bedrijfschips filteren gezondheid, acties, kerncijfers, team, tekstsignalen, uuractiviteit, pijplijn en tijdlijn. De chips komen uit de werkelijk aanwezige bedrijven; Flamestop, Flameguard en Flameseal krijgen hun vaste huisstijlkleuren. Inter wordt lokaal geleverd. De Controlekamer gebruikt uitsluitend de bestaande, toegestane gegevens uit `/api/state` en wijzigt die gegevens niet om een overzicht te maken.
+
+De gezondheid toont verlopen terugbelafspraken, hoge prioriteit zonder eigenaar en hoeveel actieve medewerkers vandaag een belregistratie hebben. **Bronmeldingen verschijnen alleen bij Alle bedrijven**; bij een bedrijfsfilter staat dat deze informatie gedeeld is. **Nu doen** opent de bestaande bedrijfswerkplek, Kanban-kolom, terugbelplanning, belrapportage of het logboek. Een tekstsignaal voor terugbellen zonder open afspraak wordt als mogelijke opvolging getoond, nooit automatisch ingepland. Het team bevat ook medewerkers zonder belmoment. Een centrale lead kan per bedrijf een andere status hebben; de pijplijn telt daarom per bedrijfswerkplek en maakt dat zichtbaar.
+
+| Onderdeel | Bestaande gegevens |
+| --- | --- |
+| Bedrijven en kleuren | `companies.id`, `name`, `color`, `columns` |
+| Belcijfers, chips en team | `callLog` en `workspaces[companyId][leadId].calls`, met dezelfde ontdubbeling als `buildCallReport`; `users.id`, `companyId`, `status`, `name` |
+| Notities en tekstsignalen | Eigen bedrijfsnotities met `createdAt`, `authorId`, `authorName`, `text` |
+| Statuswijzigingen | Werkelijke `feed`-gebeurtenissen met `type: status`, `at`, `companyId`, `authorId`, `authorName`, `statusChange` |
+| Opvolging en acties | Open `callbacks` met `dueAt`, `assigneeId`, `done`; `priority`, `ownerId`; actieve leads en daadwerkelijke kolommen |
+| Brongezondheid | `sources.lastImportError`, `scraper.lastError` en foutstatus |
+| Uuractiviteit en tijdlijn | Vandaag opgeslagen notities en statuswijzigingen, ingedeeld in `Europe/Amsterdam` |
+| Pijplijn | Actieve centrale `leads` met per bedrijf `workspace.status`, of de bestaande eerste kolom wanneer er nog geen eigen opvolging is |
+
+Telefoontjes zijn afzonderlijke geregistreerde belmomenten, inclusief onbeantwoorde pogingen; het zijn geen verzonnen geslaagde gesprekken. Historische telefoontjes, notities en statuswijzigingen van verwijderde leads blijven meetellen, maar die leads leveren geen actieve opvolgacties op. Alleen actieve medewerkers die aan de geselecteerde bedrijfswerkplek zijn gekoppeld tellen mee in de verhouding actieve bellers. Woorden als `mail`, `tb`, `terugbellen`, `al geregeld` en `opgeleverd` zijn tekstsignalen uit vandaag vastgelegde notities, geen bewijs van verstuurde e-mail of bevestigde projectuitkomst. Oude algemene gebeurtenissen worden niet achteraf als statuswijziging geïnterpreteerd.
+
+De Controlekamer haalt iedere 30 seconden één nieuwe state op. De aftelling, voortgangsring en knop **Nu vernieuwen** delen die planning. **Bijgewerkt** verschijnt na een geslaagde reactie; fouten worden als verbindingsprobleem getoond. Open formulieren blijven staan tijdens verversen. Nieuwe tijdlijnitems lichten kort op; tellers bewegen bij filterwissels van hun oude naar hun nieuwe waarde. Bij `prefers-reduced-motion` worden decoratieve animaties uitgeschakeld. Op mobiel staan navigatie en kaarten onder elkaar. De bestaande eigen dashboardpagina van verkopers en bedrijfsbeheerders blijft behouden.
+
+Het eerdere uitgebreide overzicht staat nog onder **Beheer → Alle bedrijven** (`#all-companies`). **Nu aandacht nodig** staat daar bovenaan, gevolgd door belmomenten per bedrijf en medewerker met **Vandaag** of **Deze week**. De samenvatting toont vandaag, de huidige kalenderweek en medewerkers met belmomenten in de gekozen periode. Een klik opent de passende belrapportage. Deze week begint op maandag in `Europe/Amsterdam`.
 
 De tijdlijn toont standaard **Notities en statuswijzigingen** van de laatste zeven dagen, met bedrijf, medewerker, lead en tijdstip. De filters gelden alleen voor deze tijdlijn; urgente aandachtspunten en de belvergelijking blijven over alle bedrijven zichtbaar. Nieuwe statuswijzigingen krijgen een eigen gebeurtenis met de oorspronkelijke en nieuwe kolomnaam. Een gelijktijdig opgeslagen notitie blijft een afzonderlijke gebeurtenis. Oudere algemene wijzigingen blijven beschikbaar onder **Alle gebeurtenissen**; onbekende oude statusdetails worden niet ingevuld of afgeleid. Centrale bronupdates worden één keer opgenomen.
 
