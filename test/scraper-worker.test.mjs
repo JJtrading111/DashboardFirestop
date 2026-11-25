@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {loadWorkerConfig,createBrokerClient,createPacedRequest,runJob,runWorker} from '../scraper/worker.mjs';
+import {loadWorkerConfig,createBrokerClient,createPacedRequest,runJob,runWorker,WorkerError,sanitizeFailureDiagnostic} from '../scraper/worker.mjs';
 import {loginBouwberichten,SourceLoginError,sanitizeAuthDiagnostic} from '../scraper/bouwberichten-auth.mjs';
+import {BouwberichtenApiError,createBouwberichtenApi} from '../scraper/bouwberichten-api.mjs';
 
 const filterUrl='https://portal.bouwberichten.nl/projecten#projects%5Bfilters%5D%5BconstructionPhase%5D%5B%5D=Gegund';
 const filterParameters=[['projects[filters][constructionPhase][]','Gegund']];
@@ -70,10 +71,16 @@ test('full job pages zero-based, commits distinct batches and finishes only comp
 });
 
 test('empty, oversized, changing or duplicate result sets fail without marking a job complete',async()=>{
- for(const params of [{count:0},{count:5001},{count:24,changeTotal:true},{count:24,duplicate:true}]){
+ for(const [params,failure]of [
+  [{count:0},{stage:'listing',reason:'empty_selection',processed:0,expectedTotal:0}],
+  [{count:5001},{stage:'listing',reason:'selection_limit',processed:0,expectedTotal:5000,observedTotal:5001}],
+  [{count:24,changeTotal:true},{stage:'listing',reason:'total_changed',processed:20,expectedTotal:24,observedTotal:25}],
+  [{count:24,duplicate:true},{stage:'listing',reason:'duplicate_project',processed:0,expectedTotal:24}]
+ ]){
   const api=fixtureApi(params),broker=fakeBroker(),{session,options}=jobDependencies(api,broker);
-  assert.deepEqual(await runJob({...job,mode:'full',limit:5000},options),{failed:true,code:'source_error'});
+  assert.deepEqual(await runJob({...job,mode:'full',limit:5000},options),{failed:true,code:'source_error',failure});
   assert.equal(broker.calls.some(c=>c[0]==='finish'),false);assert.equal(broker.calls.at(-1)[0],'fail');assert.equal(session.closed,1);
+  assert.deepEqual(broker.calls.at(-1)[3],failure);
   if(params.count===5001)assert.equal(broker.calls.some(c=>c[0]==='batch'),false);
  }
 });
@@ -84,8 +91,91 @@ test('account challenges, denied API access and malformed source data report saf
   const result=await runJob(job,options);
   assert.equal(result.code,['login_required','AUTH_REQUIRED','ACCESS_DENIED'].includes(code)?'login_required':code==='INVALID_RESPONSE'?'source_error':'scrape_error');
   assert.equal(session.closed,1);assert.equal(broker.calls.some(c=>c[0]==='batch'||c[0]==='finish'),false);
-  assert.equal(JSON.stringify(result).includes('secret'),false);assert.equal(broker.calls.at(-1).length,3);
+  assert.equal(JSON.stringify(result).includes('secret'),false);assert.equal(broker.calls.at(-1).length,4);assert.deepEqual(broker.calls.at(-1)[3],result.failure);
  }
+});
+
+test('empty later pages keep the already committed count and duplicate IDs rejected by the API retain their exact reason',async()=>{
+ const broker=fakeBroker(),api=fixtureApi();
+ const originalList=api.listProjects;api.listProjects=async options=>options.pageNumber?{projects:[],total:24}:originalList(options);
+ const dependencies=jobDependencies(api,broker);
+ const missing=await runJob({...job,mode:'full',limit:5000},dependencies.options);
+ assert.deepEqual(missing.failure,{stage:'listing',reason:'empty_page',processed:20,expectedTotal:24});
+ assert.equal(broker.calls.filter(call=>call[0]==='batch').length,1);assert.equal(broker.calls.some(call=>call[0]==='finish'),false);
+ const duplicateBroker=fakeBroker(),duplicates=jobDependencies(fixtureApi(),duplicateBroker);
+ duplicates.options.createApi=()=>createBouwberichtenApi({authorizedRequest:async()=>json({projects:[{id:1,constructionPhase:'Gegund'},{id:1,constructionPhase:'Gegund'}],total:2})});
+ const duplicate=await runJob(job,duplicates.options);
+ assert.equal(duplicate.code,'source_error');assert.equal(duplicate.failure.stage,'listing');assert.equal(duplicate.failure.reason,'duplicate_project');
+ assert.equal(duplicateBroker.calls.some(call=>call[0]==='batch'||call[0]==='finish'),false);
+});
+
+test('source HTTP, timeout and network failures retain only safe status and progress at the failing stage',async()=>{
+ for(const [code,status,reason,legacy]of [
+  ['AUTH_REQUIRED',401,'http_401','login_required'],['ACCESS_DENIED',403,'http_403','login_required'],
+  ['RATE_LIMIT',429,'http_429','scrape_error'],['HTTP_ERROR',503,'http_5xx','scrape_error'],
+  ['HTTP_ERROR',418,'http_error','scrape_error'],['TIMEOUT',null,'request_timeout','scrape_error'],
+  ['TRANSPORT_ERROR',null,'network_error','scrape_error']
+ ]){
+  const broker=fakeBroker(),error=new BouwberichtenApiError('password=hidden; https://private.example/token',{code,status}),api=fixtureApi({detailError:error});
+  const dependencies=jobDependencies(api,broker),result=await runJob(job,dependencies.options);
+  assert.equal(result.code,legacy);assert.deepEqual(result.failure,{stage:'detail',reason,...status!==null&&{status},processed:0,expectedTotal:24});
+  assert.deepEqual(broker.calls.at(-1)[3],result.failure);assert.equal(JSON.stringify(result).includes('private.example'),false);assert.equal(dependencies.session.closed,1);
+ }
+});
+
+test('filter and mapping validation failures and broker lease/import/finish failures expose distinct safe stages',async()=>{
+ const filterBroker=fakeBroker(),filter=jobDependencies(fixtureApi(),filterBroker);
+ filter.options.createApi=()=>({listProjects:async()=>{throw new BouwberichtenApiError('unsafe source body',{code:'FILTER_MISMATCH'});}});
+ assert.deepEqual((await runJob(job,filter.options)).failure,{stage:'listing',reason:'filter_mismatch',processed:0});
+ const mapping=jobDependencies(fixtureApi(),fakeBroker());mapping.options.mapLead=()=>{throw new BouwberichtenApiError('email=private@example.test');};
+ assert.deepEqual((await runJob(job,mapping.options)).failure,{stage:'mapping',reason:'invalid_input',processed:0,expectedTotal:24});
+ for(const [method,status,reason,stage,processed]of [['progress',409,'lease_lost','progress',0],['batch',400,'http_error','import',0],['finish',503,'http_5xx','finish',5]]){
+  const broker=fakeBroker();broker[method]=async()=>{throw new WorkerError('scrape_error',status,reason);};
+  const {options}=jobDependencies(fixtureApi(),broker),result=await runJob(job,options);
+  assert.deepEqual(result.failure,{stage,reason,status,processed,expectedTotal:24});assert.equal(result.failed,true);
+ }
+});
+
+test('the overall job deadline and worker cancellation are reported explicitly rather than as opaque scrape errors',async()=>{
+ const timeoutBroker=fakeBroker();
+ const timedOut=await runJob(job,{broker:timeoutBroker,jobTimeoutMs:1,authenticate:async({signal})=>{await new Promise(resolve=>setTimeout(resolve,10));signal.throwIfAborted();}});
+ assert.deepEqual(timedOut,{failed:true,code:'scrape_error',failure:{stage:'login',reason:'job_timeout',processed:0}});
+ assert.deepEqual(timeoutBroker.calls[0][3],timedOut.failure);
+ const controller=new AbortController(),broker=fakeBroker(),dependencies=jobDependencies(fixtureApi(),broker);
+ dependencies.options.signal=controller.signal;dependencies.options.createApi=()=>({listProjects:async()=>{controller.abort(new Error('private shutdown detail'));throw controller.signal.reason;}});
+ const cancelled=await runJob(job,dependencies.options);
+ assert.deepEqual(cancelled,{failed:true,code:'scrape_error',failure:{stage:'listing',reason:'worker_cancelled',processed:0}});
+ assert.equal(dependencies.session.closed,1);assert.equal(JSON.stringify(cancelled).includes('private'),false);
+});
+
+test('invalid job configuration and failed failure-report delivery never discard the original safe result',async()=>{
+ const broker=fakeBroker();broker.fail=async()=>{throw Error('Bearer private-worker-key');};
+ const invalid=await runJob({...job,limit:4},{broker,authenticate:()=>assert.fail('Invalid jobs must not enter a browser')});
+ assert.deepEqual(invalid,{failed:true,code:'source_error',failure:{stage:'configuration',reason:'invalid_job',processed:0}});
+ assert.equal(JSON.stringify(invalid).includes('private'),false);
+});
+
+test('failure payloads are re-sanitized before sending and cancellation permits one bounded terminal report',async()=>{
+ const controller=new AbortController();controller.abort();const sent=[];
+ const broker=createBrokerClient({dashboardUrl:'https://dashboard.example.test',workerToken:'t'.repeat(43),signal:controller.signal,
+  fetchImpl:async(url,init)=>{assert.equal(init.signal.aborted,false,'Shutdown reporting gets a fresh bounded signal');sent.push({url,body:JSON.parse(init.body)});return json({ok:true});}});
+ const failure={stage:'detail',reason:'http_403',status:403,processed:20,expectedTotal:24,observedTotal:25,password:job.password,url:filterUrl,headers:{Authorization:'private'},authStage:'https://secret.example',authReason:'not-safe'};
+ await broker.fail(job,'login_required',failure);
+ assert.equal(sent.length,1);assert.deepEqual(sent[0].body,{leaseToken:job.leaseToken,code:'login_required',diagnostic:{stage:'detail',reason:'http_403',status:403,processed:20,expectedTotal:24,observedTotal:25,authStage:'unknown',authReason:'unknown'}});
+ const serialized=JSON.stringify(sent[0].body);assert.equal(serialized.includes(job.password),false);assert.equal(serialized.includes(filterUrl),false);assert.equal(serialized.includes('private'),false);
+ let attempts=0;const stopped=createBrokerClient({dashboardUrl:'https://dashboard.example.test',workerToken:'t'.repeat(43),signal:controller.signal,sleepImpl:()=>assert.fail('A shutdown report must not wait or retry'),fetchImpl:async()=>{attempts++;return new Response('',{status:429});}});
+ await assert.rejects(stopped.fail(job,'scrape_error',{stage:'listing',reason:'worker_cancelled'}));assert.equal(attempts,1);
+});
+
+test('diagnostic whitelisting and structured failure logs cannot reflect untrusted strings or invalid counters',async()=>{
+ const safe=sanitizeFailureDiagnostic({stage:'https://private.example',reason:'password=private',status:999,processed:-1,expectedTotal:10000001,observedTotal:1.5,authStage:'bad-token',authReason:'Bearer private',message:'private',body:'private'});
+ assert.deepEqual(safe,{stage:'unknown',reason:'unexpected_error',authStage:'unknown',authReason:'unknown'});
+ const controller=new AbortController(),messages=[];let claims=0;
+ await runWorker({config:{dashboardUrl:'https://dashboard.example.test',workerToken:'t'.repeat(43)},signal:controller.signal,logger:{info:message=>messages.push(message),error:message=>messages.push(message)},sleepImpl:noopSleep,
+  fetchImpl:async()=>{if(++claims===1)return json({job});controller.abort();return json({job:null});},
+  run:async()=>({failed:true,code:'scrape_error',failure:{stage:'listing',reason:'total_changed',processed:20,expectedTotal:24,observedTotal:25,password:job.password,uri:filterUrl,rawBody:'private'}})});
+ const event=messages.filter(value=>value.startsWith('{')).map(value=>JSON.parse(value)).find(value=>value.event==='job_failed');
+ assert.deepEqual(event.failure,{stage:'listing',reason:'total_changed',processed:20,expectedTotal:24,observedTotal:25});assert.equal(messages.join('').includes(job.password),false);assert.equal(messages.join('').includes(filterUrl),false);assert.equal(messages.join('').includes('private'),false);
 });
 
 test('broker batches retry identical payload after transient failure and redact error responses',async()=>{
@@ -205,13 +295,13 @@ test('login diagnostics allow only fixed labels and booleans, excluding URLs, cr
  assert.deepEqual(sanitizeAuthDiagnostic({...valid,password:secret}),valid);
 });
 
-test('a failed job returns sanitized login diagnostics while the broker receives only its existing safe failure code',async()=>{
+test('a failed login job reports fixed failure metadata while preserving its sanitized authentication diagnostic',async()=>{
  const secret='sensitive-worker-error-body',raw={stage:'api_wait',reason:'login_timeout',originLabel:'portal',emailSubmitted:true,passwordSubmitted:true,password:secret,authorization:secret,url:secret};
  const error=Object.assign(new Error(secret),{code:'login_required',diagnostic:raw}),broker=fakeBroker();
  const result=await runJob(job,{broker,authenticate:async()=>{throw error;}});
- assert.deepEqual(result,{failed:true,code:'login_required',diagnostic:{stage:'api_wait',reason:'login_timeout',originLabel:'portal',emailSubmitted:true,passwordSubmitted:true}});
- assert.equal(JSON.stringify(result).includes(secret),false);assert.equal(broker.calls.length,1);assert.equal(broker.calls[0][0],'fail');assert.equal(broker.calls[0][2],'login_required');assert.equal(broker.calls[0].length,3);
- const other=fakeBroker();assert.deepEqual(await runJob(job,{broker:other,authenticate:async()=>{throw Object.assign(new Error(secret),{code:'INVALID_RESPONSE',diagnostic:raw});}}),{failed:true,code:'source_error'});
+ assert.deepEqual(result,{failed:true,code:'login_required',failure:{stage:'login',reason:'login_required',processed:0,authStage:'api_wait',authReason:'login_timeout'},diagnostic:{stage:'api_wait',reason:'login_timeout',originLabel:'portal',emailSubmitted:true,passwordSubmitted:true}});
+ assert.equal(JSON.stringify(result).includes(secret),false);assert.equal(broker.calls.length,1);assert.equal(broker.calls[0][0],'fail');assert.equal(broker.calls[0][2],'login_required');assert.equal(broker.calls[0].length,4);assert.deepEqual(broker.calls[0][3],result.failure);
+ const other=fakeBroker();assert.deepEqual(await runJob(job,{broker:other,authenticate:async()=>{throw Object.assign(new Error(secret),{code:'INVALID_RESPONSE',diagnostic:raw});}}),{failed:true,code:'source_error',failure:{stage:'login',reason:'invalid_response',processed:0}});
 });
 
 test('worker logging sanitizes a failed job diagnostic again instead of trusting its returned object',async()=>{

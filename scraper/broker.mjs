@@ -33,6 +33,53 @@ function nextDailyRun(time,after,alreadyScheduledDay){
  }
  throw Error('The next daily scraper run could not be resolved.');
 }
+const FAILURE_STAGES=new Set(['configuration','login','listing','detail','organisations','presentation','mapping','progress','import','finish','unknown']);
+const FAILURE_REASONS=new Set(['invalid_job','total_changed','duplicate_project','empty_page','empty_selection','selection_limit','filter_mismatch','invalid_input','invalid_response','http_401','http_403','http_429','http_5xx','http_error','request_timeout','network_error','job_timeout','worker_cancelled','lease_lost','login_required','unexpected_error','lease_expired']);
+const AUTH_STAGES=new Set(['configuration','browser_start','portal_navigation','portal_wait','login_wait','email_form','email_submitted','password_form','password_submitted','api_wait','api_request','api_refresh','unknown']);
+const AUTH_REASONS=new Set(['invalid_filter','invalid_configuration','browser_start_failed','navigation_failed','unexpected_origin','interactive_verification','submit_missing','email_step_error','password_step_error','login_timeout','control_interaction_failed','request_not_allowed','browser_closed','unexpected_error','unknown']);
+const FAILURE_MESSAGES={
+ login_required:'Bouwberichten vraagt om opnieuw inloggen of een extra controle. Verbind het account opnieuw.',
+ source_error:'De bron kon niet betrouwbaar worden uitgelezen. Controleer de selectie en voer opnieuw een proef uit.',
+ scrape_error:'Het ophalen is mislukt. Voer opnieuw een proef uit.',
+ lease_expired:'Het ophalen gaf te lang geen voortgang meer door en is gestopt.'
+};
+function safeDiagnostic(value){
+ if(!value||typeof value!=='object'||Array.isArray(value))return null;
+ const result={stage:FAILURE_STAGES.has(value.stage)?value.stage:'unknown',reason:FAILURE_REASONS.has(value.reason)?value.reason:'unexpected_error'};
+ if(Number.isInteger(value.status)&&value.status>=100&&value.status<=599)result.status=value.status;
+ for(const key of ['processed','expectedTotal','observedTotal'])if(Number.isSafeInteger(value[key])&&value[key]>=0&&value[key]<=10000000)result[key]=value[key];
+ if(AUTH_STAGES.has(value.authStage))result.authStage=value.authStage;if(AUTH_REASONS.has(value.authReason))result.authReason=value.authReason;
+ return result;
+}
+function failureInfo(code,diagnostic){
+ const reasons={
+  total_changed:['Het aantal projecten in de selectie veranderde tijdens het ophalen.','Start deze poging opnieuw. Controleer de selectie als dit blijft gebeuren.'],
+  duplicate_project:['De bron gaf hetzelfde project meer dan één keer terug.','Start opnieuw zodat de selectie opnieuw kan worden gecontroleerd.'],
+  empty_page:['De bron stopte met projecten aanleveren voordat de selectie compleet was.','Probeer opnieuw. Controleer bij herhaling de selectie bij Bouwberichten.'],
+  empty_selection:['De selectie bevatte geen projecten.','Controleer de filterselectie en voer een nieuwe proef uit.'],
+  selection_limit:['De selectie bevat meer dan 5.000 projecten.','Verklein de selectie en voer een nieuwe proef uit.'],
+  filter_mismatch:['De teruggegeven projecten passen niet bij de ingestelde selectie.','Controleer de bronfilters en voer een nieuwe proef uit.'],
+  invalid_response:['De bron gaf gegevens terug in een onbekend formaat.','Probeer opnieuw. Controleer de bron als dit blijft gebeuren.'],
+  invalid_input:['De bron kon de ingestelde aanvraag niet verwerken.','Controleer de bronfilters en voer een nieuwe proef uit.'],
+  http_401:['De aanmelding werd tijdens het ophalen niet meer geaccepteerd.','Verbind het Bouwberichten-account opnieuw en voer een proef uit.'],
+  http_403:['De aanvraag werd geweigerd.','Controleer of het Bouwberichten-account toegang heeft tot deze selectie.'],
+  http_429:['De bron ontving te veel aanvragen en vroeg om te wachten.','Wacht even en start deze poging opnieuw.'],
+  http_5xx:['De bron of de importverbinding was tijdelijk niet beschikbaar.','Start deze poging opnieuw.'],
+  http_error:['Een aanvraag tijdens het ophalen werd niet geaccepteerd.','Start opnieuw en controleer de bron als dit blijft gebeuren.'],
+  request_timeout:['Een aanvraag duurde langer dan toegestaan.','Start opnieuw. Controleer de bereikbaarheid van de bron als dit blijft gebeuren.'],
+  network_error:['De verbinding werd tijdens het ophalen onderbroken.','Controleer of de scraper en de bron bereikbaar zijn en probeer opnieuw.'],
+  job_timeout:['De maximale ophaaltijd is bereikt.','Start opnieuw of gebruik een kleinere selectie.'],
+  worker_cancelled:['Het ophalen is onderbroken.','Controleer of de scraper online is en start opnieuw.'],
+  lease_lost:['Deze ophaalpoging was niet meer actief.','Controleer de laatste poging in het logboek en start zo nodig opnieuw.'],
+  invalid_job:['De ophaalopdracht bevatte ongeldige instellingen.','Controleer de bron en voer een nieuwe proef uit.']
+ };
+ if(code==='lease_expired')return{code,reason:'lease_expired',message:FAILURE_MESSAGES.lease_expired,advice:'Controleer of de scraper online is. Je kunt deze poging opnieuw starten.',diagnostic};
+ if(code==='login_required')return{code,reason:diagnostic?.authReason||'login_required',message:FAILURE_MESSAGES.login_required,advice:'Open de broninstellingen, verbind het Bouwberichten-account opnieuw en laat de proef slagen.',diagnostic};
+ if(code==='cancelled')return{code,reason:'source_changed',message:'Deze poging is ingetrokken na een wijziging of ontkoppeling van de bron.',advice:'Controleer de huidige broninstellingen voordat je een nieuwe poging start.',diagnostic:null};
+ if(code==='legacy_unknown')return{code,reason:'not_recorded',message:'Deze oudere poging is mislukt. De precieze oorzaak is niet vastgelegd.',advice:'Voer een nieuwe proef uit als opnieuw starten niet beschikbaar is.',diagnostic:null};
+ const detail=reasons[diagnostic?.reason];
+ return{code,reason:diagnostic?.reason||code,message:detail?.[0]||FAILURE_MESSAGES[code]||FAILURE_MESSAGES.scrape_error,advice:detail?.[1]||'Start deze poging opnieuw. Controleer bij herhaling de broninstellingen.',diagnostic};
+}
 
 // The browser never receives the encryption key, password, or worker credential.
 export function createScraperBroker({db,readState,importBatch,transaction,fail,encryptionKey='',workerToken='',now=Date.now}){
@@ -42,13 +89,14 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
  const available=!!key&&!!workerToken;
  db.exec(`CREATE TABLE IF NOT EXISTS scraper_sources(
   source_id TEXT PRIMARY KEY,username TEXT NOT NULL DEFAULT '',encrypted_login TEXT NOT NULL DEFAULT '',
-  schedule_enabled INTEGER NOT NULL DEFAULT 0,next_run_at INTEGER,schedule_time TEXT NOT NULL DEFAULT '',last_schedule_day TEXT,test_passed INTEGER NOT NULL DEFAULT 0,
+  schedule_enabled INTEGER NOT NULL DEFAULT 0,next_run_at INTEGER,schedule_time TEXT NOT NULL DEFAULT '',last_schedule_day TEXT,configuration_version INTEGER NOT NULL DEFAULT 0,test_passed INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'not_configured',last_started_at INTEGER,last_finished_at INTEGER,
   counts_json TEXT,last_processed INTEGER NOT NULL DEFAULT 0,last_total INTEGER,last_error TEXT);
  CREATE TABLE IF NOT EXISTS scraper_jobs(
   id TEXT PRIMARY KEY,source_id TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,queued_at INTEGER NOT NULL,
   started_at INTEGER,finished_at INTEGER,lease_hash TEXT,lease_until INTEGER,processed INTEGER NOT NULL DEFAULT 0,total INTEGER,
-  counts_json TEXT NOT NULL DEFAULT '{"created":0,"updated":0,"unchanged":0}');
+  counts_json TEXT NOT NULL DEFAULT '{"created":0,"updated":0,"unchanged":0}',
+  error_code TEXT,error_details_json TEXT,source_fingerprint TEXT,retry_of TEXT);
  CREATE TABLE IF NOT EXISTS scraper_batches(job_id TEXT NOT NULL,batch INTEGER NOT NULL,payload_hash TEXT NOT NULL,
   counts_json TEXT NOT NULL,items_count INTEGER NOT NULL,PRIMARY KEY(job_id,batch));
  CREATE TABLE IF NOT EXISTS scraper_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -56,6 +104,10 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
  const columns=new Set(db.prepare('PRAGMA table_info(scraper_sources)').all().map(column=>column.name));
  if(!columns.has('schedule_time'))db.exec("ALTER TABLE scraper_sources ADD COLUMN schedule_time TEXT NOT NULL DEFAULT ''");
  if(!columns.has('last_schedule_day'))db.exec('ALTER TABLE scraper_sources ADD COLUMN last_schedule_day TEXT');
+ if(!columns.has('configuration_version'))db.exec('ALTER TABLE scraper_sources ADD COLUMN configuration_version INTEGER NOT NULL DEFAULT 0');
+ const jobColumns=new Set(db.prepare('PRAGMA table_info(scraper_jobs)').all().map(column=>column.name));
+ for(const column of ['error_code','error_details_json','source_fingerprint','retry_of'])if(!jobColumns.has(column))db.exec(`ALTER TABLE scraper_jobs ADD COLUMN ${column} TEXT`);
+ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS scraper_jobs_retry_once ON scraper_jobs(retry_of) WHERE retry_of IS NOT NULL');
  // Preserve every existing first run, deriving only its displayed local clock time.
  for(const cfg of db.prepare("SELECT source_id,next_run_at FROM scraper_sources WHERE schedule_time='' OR schedule_time IS NULL").all()){
   db.prepare('UPDATE scraper_sources SET schedule_time=? WHERE source_id=?').run(localTime(Number.isFinite(cfg.next_run_at)?cfg.next_run_at:now()),cfg.source_id);
@@ -68,22 +120,41 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
  function source(id){const s=readState().sources.find(s=>s.id===id&&!s.deleted);if(!s||s.provider!=='bouwberichten')fail(404,'Deze Bouwberichten-bron bestaat niet.');return s;}
  function usable(id){const s=source(id);if(!s.filterUrl||!s.filterParameters?.length)fail(400,'Sla eerst een expliciete Bouwberichten-filterlink bij deze bron op.');return s;}
  const active=id=>db.prepare("SELECT * FROM scraper_jobs WHERE source_id=? AND status IN ('queued','running') ORDER BY queued_at DESC LIMIT 1").get(id);
- function cancel(id){db.prepare("UPDATE scraper_jobs SET status='cancelled',finished_at=?,lease_hash=NULL WHERE source_id=? AND status IN ('queued','running')").run(now(),id);}
+ const retryChild=id=>db.prepare('SELECT id FROM scraper_jobs WHERE retry_of=?').get(id);
+ function fingerprint(entry,cfg){
+  if(!entry||entry.deleted||entry.provider!=='bouwberichten'||!entry.filterUrl||!entry.filterParameters?.length||!cfg?.encrypted_login)return null;
+  return hash(JSON.stringify([entry.provider,entry.filterUrl,entry.filterParameters,cfg.encrypted_login,cfg.configuration_version]));
+ }
+ function cancel(id){db.prepare("UPDATE scraper_jobs SET status='cancelled',finished_at=?,lease_hash=NULL,error_code='cancelled',error_details_json=NULL WHERE source_id=? AND status IN ('queued','running')").run(now(),id);}
  function invalidate(id,{disconnect=false,message='De bron is gewijzigd. Voer opnieuw een proef uit.'}={}){
-  cancel(id);db.prepare("UPDATE scraper_sources SET schedule_enabled=0,next_run_at=NULL,test_passed=0,status=?,last_error=? WHERE source_id=?").run(disconnect?'not_configured':'ready',disconnect?null:message,id);
+  cancel(id);db.prepare("UPDATE scraper_sources SET schedule_enabled=0,next_run_at=NULL,test_passed=0,configuration_version=configuration_version+1,status=?,last_error=? WHERE source_id=?").run(disconnect?'not_configured':'ready',disconnect?null:message,id);
   if(disconnect)db.prepare("UPDATE scraper_sources SET username='',encrypted_login='' WHERE source_id=?").run(id);
  }
- function queue(id,mode){
-  usable(id);const cfg=row(id);if(!cfg?.encrypted_login)fail(409,'Verbind eerst je Bouwberichten-account.');if(active(id))fail(409,'Er staat al een opdracht voor deze bron klaar of er wordt al opgehaald.');
+ function queue(id,mode,{retryOf=null}={}){
+  const entry=usable(id),cfg=row(id);if(!cfg?.encrypted_login)fail(409,'Verbind eerst je Bouwberichten-account.');if(active(id))fail(409,'Er staat al een opdracht voor deze bron klaar of er wordt al opgehaald.');
   const credential=db.prepare('SELECT * FROM source_import_credentials WHERE source_id=?').get(id);if(!credential?.enabled)fail(409,'Hervat eerst de import voor deze bron.');
-  const jobId='scrape-'+randomUUID();db.prepare("INSERT INTO scraper_jobs(id,source_id,mode,status,queued_at) VALUES(?,?,?,'queued',?)").run(jobId,id,mode,now());
+  const jobId='scrape-'+randomUUID();db.prepare("INSERT INTO scraper_jobs(id,source_id,mode,status,queued_at,source_fingerprint,retry_of) VALUES(?,?,?,'queued',?,?,?)").run(jobId,id,mode,now(),fingerprint(entry,cfg),retryOf);
   db.prepare("UPDATE scraper_sources SET status='queued',last_error=NULL WHERE source_id=?").run(id);return jobId;
  }
+ function retryBlocked(job,entry,cfg){
+  if(job.status!=='failed')return'Alleen een mislukte poging kan opnieuw worden gestart.';
+  if(retryChild(job.id))return'Deze poging is al opnieuw gestart. Bekijk de vervolgopdracht in het logboek.';
+  if(!available)return'Automatisch ophalen is voor deze werkplek nog niet beschikbaar.';
+  if(!entry||entry.deleted||entry.provider!=='bouwberichten')return'Deze bron is verwijderd of niet meer beschikbaar.';
+  if(!cfg?.encrypted_login)return'Verbind eerst het Bouwberichten-account opnieuw.';
+  if(active(job.source_id))return'Er staat al een opdracht voor deze bron klaar of er wordt al opgehaald.';
+  if(cfg.status==='login_required'||job.error_code==='login_required')return'Verbind het Bouwberichten-account opnieuw en voer een proef uit.';
+  if(!entry.filterUrl||!entry.filterParameters?.length)return'Sla eerst een geldige filterselectie op.';
+  if(!db.prepare('SELECT enabled FROM source_import_credentials WHERE source_id=?').get(job.source_id)?.enabled)return'Hervat eerst de import voor deze bron en voer een proef uit.';
+  if(!job.source_fingerprint)return'Bij deze oudere poging is de selectie niet meer te controleren. Voer een nieuwe proef uit.';
+  if(job.source_fingerprint!==fingerprint(entry,cfg))return'De selectie of aanmelding is na deze poging gewijzigd. Voer een nieuwe proef uit.';
+  return null;
+ }
  function manage(type,p,id){
-  required();source(id);if(type!=='source.scraper.disconnect'&&!(type==='source.scraper.schedule'&&p.enabled===false))usable(id);
+  required();source(id);if(type!=='source.scraper.disconnect'&&type!=='source.scraper.retry'&&!(type==='source.scraper.schedule'&&p.enabled===false))usable(id);
   if(type==='source.scraper.configure'){
    if(typeof p.username!=='string'||p.username.trim().length<3||p.username.trim().length>254||/[\u0000-\u001f]/.test(p.username)||typeof p.password!=='string'||!p.password.length||p.password.length>256)fail(400,'Vul een geldige Bouwberichten-gebruikersnaam en wachtwoord in.');
-   cancel(id);const username=p.username.trim();db.prepare("INSERT INTO scraper_sources(source_id,username,encrypted_login,schedule_time,status) VALUES(?,?,?,?,'ready') ON CONFLICT(source_id) DO UPDATE SET username=excluded.username,encrypted_login=excluded.encrypted_login,status='ready',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error=NULL").run(id,username,encrypt(id,{username,password:p.password}),localTime(now()));
+   cancel(id);const username=p.username.trim();db.prepare("INSERT INTO scraper_sources(source_id,username,encrypted_login,schedule_time,status) VALUES(?,?,?,?,'ready') ON CONFLICT(source_id) DO UPDATE SET username=excluded.username,encrypted_login=excluded.encrypted_login,configuration_version=configuration_version+1,status='ready',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error=NULL").run(id,username,encrypt(id,{username,password:p.password}),localTime(now()));
    // Keep an existing connector key valid; only create an internal key when none exists.
    db.prepare('INSERT INTO source_import_credentials(source_id,token_hash,enabled,created_at) VALUES(?,?,1,?) ON CONFLICT(source_id) DO UPDATE SET enabled=1').run(id,hash(token()),date(now()));
    queue(id,'test');
@@ -96,6 +167,13 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
    const credential=db.prepare('SELECT enabled FROM source_import_credentials WHERE source_id=?').get(id);if(p.enabled&&!credential?.enabled)fail(409,'Hervat eerst de import voor deze bron.');
    const time=p.time??configuredTime(cfg);
    db.prepare("UPDATE scraper_sources SET schedule_enabled=?,next_run_at=?,schedule_time=?,status=CASE WHEN status IN ('queued','running') THEN status ELSE ? END WHERE source_id=?").run(p.enabled?1:0,p.enabled?nextDailyRun(time,now(),cfg.last_schedule_day):null,time,p.enabled?'active':cfg.test_passed?'test_passed':'ready',id);
+  }else if(type==='source.scraper.retry'){
+   expire();
+   if(typeof p.jobId!=='string'||p.jobId.length!==43||!/^scrape-[0-9a-f-]{36}$/.test(p.jobId))fail(400,'Kies een geldige mislukte ophaalpoging.');
+   const job=db.prepare('SELECT * FROM scraper_jobs WHERE id=? AND source_id=?').get(p.jobId,id);if(!job)fail(404,'Deze ophaalpoging bestaat niet bij deze bron.');
+   const previous=retryChild(job.id);if(previous)return{sourceId:id,retryJobId:previous.id,alreadyQueued:true};
+   const blocked=retryBlocked(job,source(id),row(id));if(blocked)fail(409,blocked);
+   return{sourceId:id,retryJobId:queue(id,job.mode,{retryOf:job.id}),alreadyQueued:false};
   }else if(type==='source.scraper.disconnect')invalidate(id,{disconnect:true});
   else fail(400,'Onbekende ophaalactie.');
   return{sourceId:id};
@@ -110,7 +188,7 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
  function authorizeWorker(req){required();const raw=/^Bearer ([A-Za-z0-9_-]{43,128})$/.exec(String(req.headers.authorization||''))?.[1]||'';if(!same(hash(raw),hash(workerToken)))fail(401,'De scraperaanmelding is ongeldig.');}
  function expire(){
   const expired=db.prepare("SELECT * FROM scraper_jobs WHERE status='running' AND lease_until<=?").all(now());
-  for(const job of expired){db.prepare("UPDATE scraper_jobs SET status='failed',finished_at=?,lease_hash=NULL WHERE id=?").run(now(),job.id);db.prepare("UPDATE scraper_sources SET status='error',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error='Het ophalen is onderbroken. Start opnieuw een proef.',last_finished_at=?,counts_json=?,last_processed=?,last_total=? WHERE source_id=?").run(now(),job.counts_json,job.processed,job.total,job.source_id);}
+  for(const job of expired){const finished=now(),diagnostic={stage:'unknown',reason:'lease_expired',processed:job.processed,...job.total!==null?{expectedTotal:job.total}:{}};db.prepare("UPDATE scraper_jobs SET status='failed',finished_at=?,lease_hash=NULL,error_code='lease_expired',error_details_json=? WHERE id=?").run(finished,JSON.stringify(diagnostic),job.id);db.prepare("UPDATE scraper_sources SET status='error',schedule_enabled=0,next_run_at=NULL,test_passed=0,last_error='Het ophalen is onderbroken. Start opnieuw een proef.',last_finished_at=?,counts_json=?,last_processed=?,last_total=? WHERE source_id=?").run(finished,job.counts_json,job.processed,job.total,job.source_id);}
  }
  function queueWorkbookRefreshes(){
   const migration='lead_workbook_refresh_v1';
@@ -180,10 +258,45 @@ export function createScraperBroker({db,readState,importBatch,transaction,fail,e
    return{ok:true,counts:JSON.parse(job.counts_json)};
   }
   if(kind==='fail'){
-   const login=p.code==='login_required',message=login?'Bouwberichten vraagt om opnieuw inloggen of een extra controle. Verbind het account opnieuw.':p.code==='source_error'?'De bron kon niet betrouwbaar worden uitgelezen. Controleer de selectie en voer opnieuw een proef uit.':'Het ophalen is mislukt. Voer opnieuw een proef uit.';
-   transaction(()=>{db.prepare("UPDATE scraper_jobs SET status='failed',finished_at=?,lease_hash=NULL WHERE id=?").run(now(),id);db.prepare('UPDATE scraper_sources SET status=?,schedule_enabled=0,next_run_at=NULL,test_passed=0,last_finished_at=?,counts_json=?,last_processed=?,last_total=?,last_error=? WHERE source_id=?').run(login?'login_required':'error',now(),job.counts_json,job.processed,job.total,message,job.source_id);});return{ok:true};
+   const finished=now(),code=['login_required','source_error','scrape_error'].includes(p.code)?p.code:'scrape_error',diagnostic=safeDiagnostic(p.diagnostic),message=failureInfo(code,diagnostic).message;
+   transaction(()=>{db.prepare("UPDATE scraper_jobs SET status='failed',finished_at=?,lease_hash=NULL,error_code=?,error_details_json=? WHERE id=?").run(finished,code,diagnostic?JSON.stringify(diagnostic):null,id);db.prepare('UPDATE scraper_sources SET status=?,schedule_enabled=0,next_run_at=NULL,test_passed=0,last_finished_at=?,counts_json=?,last_processed=?,last_total=?,last_error=? WHERE source_id=?').run(code==='login_required'?'login_required':'error',finished,job.counts_json,job.processed,job.total,message,job.source_id);});return{ok:true};
   }
   fail(404,'Deze scraperfunctie bestaat niet.');
  }
- return{manage,invalidate,sourceSummary,authorizeWorker,claim,report};
+ function logbook({status='all',sourceId='',limit=20,offset=0}={}){return transaction(()=>{
+  if(!['all','failed','running','queued','finished','cancelled'].includes(status)||!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(offset)||offset<0||offset>100||typeof sourceId!=='string'||sourceId.length>100)fail(400,'Kies geldige logboekfilters.');
+  expire();const clauses=[],parameters=[];
+  if(status!=='all'){clauses.push('status=?');parameters.push(status);}if(sourceId&&sourceId!=='all'){clauses.push('source_id=?');parameters.push(sourceId);}
+  const jobs=db.prepare('SELECT * FROM scraper_jobs'+(clauses.length?' WHERE '+clauses.join(' AND '):'')+' ORDER BY queued_at DESC,rowid DESC LIMIT 100').all(...parameters);
+  const sources=new Map(readState().sources.map(entry=>[entry.id,entry]));
+  const entries=jobs.slice(offset,offset+limit).map(job=>{
+   const entry=sources.get(job.source_id),cfg=row(job.source_id),child=retryChild(job.id);let diagnostic=null,storedCounts={};
+   try{diagnostic=safeDiagnostic(JSON.parse(job.error_details_json));}catch{}
+   try{storedCounts=JSON.parse(job.counts_json);}catch{}
+   const counts=Object.fromEntries(['created','updated','unchanged'].map(key=>[key,Number.isSafeInteger(storedCounts?.[key])&&storedCounts[key]>=0&&storedCounts[key]<=10000000?storedCounts[key]:0]));
+   const code=['login_required','source_error','scrape_error','lease_expired','legacy_unknown','cancelled'].includes(job.error_code)?job.error_code:job.status==='failed'?'legacy_unknown':job.status==='cancelled'?'cancelled':null;
+   const blocked=retryBlocked(job,entry,cfg);
+   return{id:job.id,sourceId:job.source_id,sourceName:entry?.name||'Verwijderde bron',mode:job.mode,status:job.status,
+    queuedAt:date(job.queued_at),startedAt:date(job.started_at),finishedAt:date(job.finished_at),processed:job.processed,total:job.total,counts,
+    error:code?failureInfo(code,diagnostic):null,canRetry:!blocked,retryBlockedReason:blocked,retryJobId:child?.id||null,retryOf:job.retry_of||null};
+  });
+  const seen=Number(db.prepare("SELECT value FROM scraper_meta WHERE key='worker_seen'").get()?.value||0);
+  return{entries,total:jobs.length,limit,offset,hasMore:offset+limit<jobs.length,serverTime:date(now()),workerOnline:seen>now()-90000};
+ });}
+ // Existing active jobs are still tied to the current settings: changing a source
+ // always cancels them. The latest legacy failure is provable only while its
+ // source still carries that failure's timestamp and terminal status.
+ const migrationSources=new Map(readState().sources.map(entry=>[entry.id,entry]));
+ for(const job of db.prepare("SELECT * FROM scraper_jobs WHERE source_fingerprint IS NULL AND status IN ('queued','running','failed')").all()){
+  const cfg=row(job.source_id),latest=db.prepare('SELECT id FROM scraper_jobs WHERE source_id=? ORDER BY queued_at DESC,rowid DESC LIMIT 1').get(job.source_id);
+  // The old failure writer called Date.now() separately for the job and source.
+  const matchingFailureTime=Number.isFinite(job.finished_at)&&Number.isFinite(cfg?.last_finished_at)&&cfg.last_finished_at>=job.finished_at&&cfg.last_finished_at-job.finished_at<=1000;
+  const legacyFailure=job.status==='failed'&&latest?.id===job.id&&matchingFailureTime&&['error','login_required'].includes(cfg?.status);
+  if(['queued','running'].includes(job.status)||legacyFailure){
+   const value=fingerprint(migrationSources.get(job.source_id),cfg);
+   if(value)db.prepare('UPDATE scraper_jobs SET source_fingerprint=? WHERE id=?').run(value,job.id);
+   if(legacyFailure&&!job.error_code)db.prepare('UPDATE scraper_jobs SET error_code=? WHERE id=?').run(cfg.status==='login_required'?'login_required':'legacy_unknown',job.id);
+  }
+ }
+ return{manage,invalidate,sourceSummary,authorizeWorker,claim,report,logbook};
 }

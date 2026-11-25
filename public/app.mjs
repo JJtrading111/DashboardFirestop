@@ -8,7 +8,7 @@ const fmt=(v,opts={})=>v?new Intl.DateTimeFormat('nl-NL',{day:'numeric',month:'s
 const day=v=>fmt(v,{hour:undefined,minute:undefined});
 const names={bouw:'Bouwberichten.nl',hotels:'Hotels',vve:'VvE',outlook:'Outlook'};
 const priorityNames={high:'Hoog',medium:'Normaal',low:'Laag'};
-const routes=[['dashboard','Overzicht','grid'],['leads','Alle leads','layers'],['kanban','Kanban','board'],['calls','Bellijst','phone'],['callbacks','Terugbelafspraken','calendar'],['feed','Nieuwsfeed','activity'],['reports','Rapportages','chart'],['sources','Bronnen & koppelingen','link'],['team','Bedrijven & gebruikers','users'],['settings','Instellingen','settings']];
+const routes=[['dashboard','Overzicht','grid'],['leads','Alle leads','layers'],['kanban','Kanban','board'],['calls','Bellijst','phone'],['callbacks','Terugbelafspraken','calendar'],['feed','Nieuwsfeed','activity'],['reports','Rapportages','chart'],['sources','Bronnen & koppelingen','link'],['logbook','Logboek','activity'],['team','Bedrijven & gebruikers','users'],['settings','Instellingen','settings']];
 const icons={grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',layers:'m12 3 9 5-9 5-9-5 9-5 M3 12l9 5 9-5 M3 16l9 5 9-5',board:'M3 4h18v16H3z M9 4v16 M15 4v16 M5.5 8h1 M11.5 8h1 M17.5 8h1',phone:'M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L9 11a16 16 0 0 0 4 4l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z',calendar:'M4 5h16v16H4z M16 3v4 M8 3v4 M4 11h16 M8 15h2 M14 15h2',activity:'M3 12h4l3-8 4 16 3-8h4',chart:'M4 3v17h17 M8 15v-4 M13 15V7 M18 15V4',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',search:'M21 21l-5-5 M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14',plus:'M12 5v14 M5 12h14',bell:'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4',chevron:'m9 5 7 7-7 7',close:'m6 6 12 12 M6 18 18 6',mail:'M3 5h18v14H3z m0 0 9 7 9-7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',check:'m5 12 4 4L19 6',building:'M4 21V3h11v18 M15 10h5v11 M7 7h4 M7 11h4 M7 15h4 M2 21h20',download:'M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5',edit:'m15 4 5 5 M4 20l4-1L21 6l-4-4L4 15z',menu:'M3 6h18 M3 12h18 M3 18h18',shield:'m12 3 9 4v5c0 5-9 9-9 9s-9-4-9-9V7z m-4 9 3 3 5-6',spark:'m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z'};
 const icon=(name)=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.layers}"/></svg>`;
 let state=null,session=null,authError='',authBusy=false,authRemember=false,activation=null,activationToken=null,activationInvalid=false;
@@ -17,6 +17,10 @@ if(initialFragment.has('activate')){activationToken=initialFragment.get('activat
 let pref;try{pref=JSON.parse(localStorage.getItem(PREF));}catch{}pref||={};
 const ui={route:routes.some(r=>r[0]===location.hash.slice(1))?location.hash.slice(1):'dashboard',userId:null,companyId:pref.companyId||null,query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:'',deliveryFrom:'',deliveryTo:'',projectDateSort:null,drawer:null,modal:null,feedFilter:'all',reportCompany:'current',reportSeller:'all',reportSource:'all',reportFrom:'',reportTo:'',dismissed:pref.dismissed||[],mobile:false};
 let transient=[],lastFocus=null,drawerScroll=0;
+let sourceLogbookVersion=0;
+const emptySourceLogbook=()=>({viewerId:null,entries:[],status:'failed',source:'all',loaded:false,loading:false,error:'',total:0,hasMore:false,workerOnline:true,busyJobId:null});
+let sourceLogbook=emptySourceLogbook();
+function clearSourceLogbook(){sourceLogbookVersion++;sourceLogbook=emptySourceLogbook();}
 let leadDraft=null,leadReturn=null;
 const leadFields=['status','priority','ownerId','commitment','calculation'];
 const currentUser=()=>state.users.find(x=>x.id===ui.userId)||state.users[0];
@@ -61,12 +65,13 @@ const statusName=id=>company().columns.find(c=>c.id===id)?.name||'Nieuw';
 function save(){try{localStorage.setItem(PREF,JSON.stringify({companyId:ui.companyId,dismissed:ui.dismissed}));}catch{}}
 let mutationQueue=Promise.resolve(),pendingMutations=0,refreshVersion=0,lastSync=null;
 async function api(path,{method='GET',body,publicRequest=false}={}){
+ const requestSession=session;
  const headers={Accept:'application/json'};
  if(body!==undefined)headers['Content-Type']='application/json';
  if(session?.csrfToken&&method!=='GET')headers['X-CSRF-Token']=session.csrfToken;
  let response;try{response=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store'});}catch{throw Error('Geen verbinding met de server. Probeer het opnieuw.');}
  const result=await response.json().catch(()=>({error:'De server gaf geen geldig antwoord.'}));
- if(!response.ok){if(response.status===401&&!publicRequest){session=null;state=null;refreshVersion++;ui.modal=null;ui.drawer=null;authError='Je sessie is verlopen. Log opnieuw in.';renderAuth();}throw Error(result.error||'De actie kon niet worden uitgevoerd.');}
+ if(!response.ok){if(response.status===401&&!publicRequest&&session===requestSession){session=null;state=null;refreshVersion++;ui.modal=null;ui.drawer=null;authError='Je sessie is verlopen. Log opnieuw in.';renderAuth();}throw Error(result.error||'De actie kon niet worden uitgevoerd.');}
  return result;
 }
 function applyServer(result){if(!session?.authenticated)throw Error('Je sessie is verlopen. Log opnieuw in.');state=result.state;ui.userId=result.userId;ui.companyId=result.companyId;lastSync=new Date();save();}
@@ -81,10 +86,13 @@ async function refreshState(companyId=ui.companyId,{renderPage=true,force=false,
  return result;
 }
 function mutate(type,payload={},targetCompany=ui.companyId){
+ const actorSession=session;
  pendingMutations++;
  refreshVersion++;
  const job=mutationQueue.then(async()=>{
+  if(!actorSession?.authenticated||session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
   const result=await api('/api/action',{method:'POST',body:{type,companyId:targetCompany,payload}});
+  if(session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
   applyServer(result);
   return result;
  });
@@ -114,7 +122,7 @@ function authMarkup(){
  else content='<form id="'+(activating?'activation-form':'login-form')+'">'+(activating?'<div class="invitation-summary"><strong>'+esc(activation.companyName)+'</strong><span>'+esc(activation.role)+'</span><span>Geldig tot '+fmt(activation.expiresAt)+'</span></div><label class="field"><span>Je naam</span><input name="name" required maxlength="100" autocomplete="name" value="'+esc(activation.name)+'"></label>':'')+'<label class="field"><span>E-mailadres</span><input name="email" type="email" required maxlength="160" autocomplete="username" '+(activating?'readonly value="'+esc(activation.email)+'"':'')+'></label>'+passwordField('password',activating?'Kies een wachtwoord':'Wachtwoord',activating)+(activating?passwordField('passwordConfirm','Herhaal je wachtwoord',true)+'<p class="muted help-text">Gebruik minimaal 12 tekens. '+(activation.role==='hoofdbeheerder'?'Als hoofdbeheerder heb je toegang tot alle bedrijven.':'Je account is gekoppeld aan '+esc(activation.companyName)+'.')+'</p>':'<label class="remember-login"><input name="rememberMe" type="checkbox" value="true" '+(authRemember?'checked':'')+'><span>Aangemeld blijven<small>30 dagen op dit apparaat</small></span></label><p class="muted help-text">Nog geen account of je wachtwoord vergeten? Vraag je beheerder om hulp.</p>')+'<button type="submit" class="button primary auth-submit" '+(authBusy?'disabled':'')+'>'+(authBusy?'Even geduld…':activating?'Account activeren':'Inloggen')+'</button></form>';
  return intro+content+'<div class="auth-bottom">'+icon('shield')+' Alleen toegang na een uitnodiging.</div></section></main>';
 }
-function renderAuth(){document.body.classList.remove('overlay-open');$('#overlay-root').innerHTML='';$('#toast-root').innerHTML='';$('#app').innerHTML=authMarkup();}
+function renderAuth(){clearSourceLogbook();document.body.classList.remove('overlay-open');$('#overlay-root').innerHTML='';$('#toast-root').innerHTML='';$('#app').innerHTML=authMarkup();}
 async function initialize(){
  $('#app').innerHTML='<div class="app-loading" role="status">Bouwberichten Dashboard laden…</div>';
  try{
@@ -302,6 +310,77 @@ async function refreshScraperModal(){
  try{await refreshState(ui.companyId,{renderPage:false});if(ui.modal===modal)renderOverlay();}catch(error){if(state)toast(error.message,'amber');}finally{scraperRefreshPending=false;}
 }
 
+const logbookStatuses={failed:['Mislukt','red'],running:['Bezig met ophalen','blue'],queued:['Ingepland','amber'],finished:['Geslaagd','green'],cancelled:['Geannuleerd','gray']};
+function logbookDiagnosticHTML(error){
+ const detail=error?.diagnostic;if(!detail)return '';
+ const stages={configuration:'Broninstellingen controleren',login:'Inloggen bij Bouwberichten',listing:'Projectselectie ophalen',detail:'Projectgegevens ophalen',organisations:'Betrokken partijen ophalen',presentation:'Projectpresentatie openen',mapping:'Projectgegevens verwerken',progress:'Voortgang doorgeven',import:'Projecten opslaan',finish:'Ophaalpoging afronden'};
+ const authReasons={invalid_filter:'De filterlink is ongeldig.',invalid_configuration:'De broninstellingen zijn onvolledig.',browser_start_failed:'De bron kon niet worden geopend.',navigation_failed:'De inlogpagina kon niet worden geladen.',unexpected_origin:'De aanmelding kwam op een onverwachte website terecht.',interactive_verification:'De bron vraagt om een extra handmatige controle.',submit_missing:'De inlogknop kon niet worden gevonden.',email_step_error:'Het e-mailadres kon niet worden verzonden.',password_step_error:'Het wachtwoord kon niet worden verzonden.',login_timeout:'De aanmelding duurde te lang.',control_interaction_failed:'Het inlogformulier kon niet worden bediend.',request_not_allowed:'De bron weigerde deze aanvraag.',browser_closed:'De verbinding met de bron is gesloten.'};
+ const details=[];if(stages[detail.stage])details.push('Stap: '+stages[detail.stage]);
+ if(Number.isInteger(detail.status))details.push('Antwoordcode: '+detail.status);
+ if(Number.isSafeInteger(detail.expectedTotal)&&Number.isSafeInteger(detail.observedTotal))details.push('Verwacht: '+detail.expectedTotal+' projecten · ontvangen: '+detail.observedTotal);
+ if(authReasons[detail.authReason])details.push(authReasons[detail.authReason]);
+ return details.length?'<p>'+details.map(esc).join('<br>')+'</p>':'';
+}
+function sourceLogbookContext(){
+ if(!state||!session?.authenticated||!isChief()){clearSourceLogbook();return false;}
+ if(sourceLogbook.viewerId!==currentUser().id){clearSourceLogbook();sourceLogbook.viewerId=currentUser().id;}
+ return true;
+}
+function sourceLogbookEntries(){
+ const log=sourceLogbook;
+ if(!log.entries.length)return '<div class="panel panel-body" role="status">'+(log.loading?'Logboek laden…':log.error?'Het logboek kon niet worden geladen. Klik op Vernieuwen om het opnieuw te proberen.':log.status==='failed'?'Geen mislukte ophaalpogingen in deze selectie.':'Geen ophaalpogingen in deze selectie.')+'</div>';
+ return log.entries.map(entry=>{
+  const [label,tone]=logbookStatuses[entry.status]||['Onbekend','gray'],source=state.sources.find(s=>s.id===entry.sourceId&&!s.deleted),failed=entry.status==='failed';
+  const count=Number(entry.processed)||0,total=entry.total==null?'':String(Number(entry.total)||0),error=entry.error;
+  const retry=failed?btn(log.busyJobId===entry.id?'Inplannen…':'Opnieuw proberen','retry-source-import','primary','data-id="'+esc(entry.sourceId)+'" data-job-id="'+esc(entry.id)+'"'+(!entry.canRetry||log.busyJobId?' disabled':'')+(!entry.canRetry?' title="'+esc(entry.retryBlockedReason||'Opnieuw proberen is niet beschikbaar.')+'"':'')):'';
+  return '<article class="logbook-entry" data-logbook-job="'+esc(entry.id)+'"><div class="logbook-entry-head"><div><h2>'+esc(entry.sourceName)+'</h2><span class="muted">'+(entry.mode==='full'?'Volledige selectie':'Proef met 5 projecten')+(entry.retryOf?' · Nieuwe poging':'')+'</span></div><span class="badge '+tone+'">'+label+'</span></div><div class="logbook-meta"><span>Ingepland: '+fmt(entry.queuedAt)+'</span>'+(entry.startedAt?'<span>Gestart: '+fmt(entry.startedAt)+'</span>':'')+(entry.finishedAt?'<span>Afgerond: '+fmt(entry.finishedAt)+'</span>':'')+'</div><div class="logbook-meta"><strong>'+count+(total?' van '+total:'')+' projecten verwerkt</strong><span>'+Number(entry.counts?.created||0)+' nieuw · '+Number(entry.counts?.updated||0)+' bijgewerkt · '+Number(entry.counts?.unchanged||0)+' ongewijzigd</span></div>'+(error?'<div class="logbook-error"><p><strong>'+esc(error.message)+'</strong></p>'+logbookDiagnosticHTML(error)+(error.advice?'<p>'+esc(error.advice)+'</p>':'')+'</div>':'')+(failed&&entry.retryBlockedReason?'<p class="scraper-help">'+esc(entry.retryBlockedReason)+'</p>':'')+'<div class="logbook-actions">'+retry+(source&&sourceProvider(source)==='bouwberichten'?btn('Automatisch ophalen','source-scraper','secondary','data-id="'+esc(entry.sourceId)+'"'):'')+'</div></article>';
+ }).join('');
+}
+function sourceLogbookPage(){
+ if(!sourceLogbookContext())return heading('Logboek','Alleen de hoofdbeheerder kan het logboek van de bronnen bekijken.');
+ const log=sourceLogbook,options=new Map(state.sources.filter(s=>sourceProvider(s)==='bouwberichten').map(s=>[s.id,s.name]));
+ for(const entry of log.entries)if(!options.has(entry.sourceId))options.set(entry.sourceId,entry.sourceName);
+ if(log.source!=='all'&&!options.has(log.source))options.set(log.source,'Verwijderde bron');
+ return heading('Logboek','Bekijk ophaalpogingen per bron, de reden van een fout en de voortgang van een nieuwe poging.',btn(log.loading?'Vernieuwen…':'Vernieuwen','refresh-source-logbook','secondary',log.loading?'disabled':''))+'<section class="logbook-page"><div class="logbook-filters"><label class="field"><span>Status</span><select data-logbook-filter="status"><option value="failed" '+(log.status==='failed'?'selected':'')+'>Mislukt</option><option value="all" '+(log.status==='all'?'selected':'')+'>Alle pogingen</option>'+['running','queued','finished','cancelled'].map(status=>'<option value="'+status+'" '+(log.status===status?'selected':'')+'>'+logbookStatuses[status][0]+'</option>').join('')+'</select></label><label class="field"><span>Bron</span><select data-logbook-filter="source"><option value="all">Alle bronnen</option>'+[...options].map(([id,name])=>'<option value="'+esc(id)+'" '+(log.source===id?'selected':'')+'>'+esc(name)+'</option>').join('')+'</select></label></div><p class="scraper-error" data-logbook-page-error role="alert" '+(!log.error?'hidden':'')+'>'+esc(log.error)+'</p><p class="scraper-help" data-logbook-worker '+(log.workerOnline?'hidden':'')+'>De scraper is momenteel niet online. Een ingeplande poging wacht tot de verbinding is hersteld.</p><div class="source-logbook" aria-busy="'+log.loading+'">'+sourceLogbookEntries()+'</div><div class="logbook-actions">'+btn(log.loading?'Laden…':'Meer laden','more-source-logbook','secondary',(log.hasMore?'':'hidden ')+(log.loading?'disabled':''))+'<span class="muted" data-logbook-total>'+log.entries.length+' van '+log.total+' pogingen · maximaal de laatste 100 per selectie</span></div></section>';
+}
+function updateSourceLogbookView(){
+ // Update only the logbook: an open source form and its unfinished fields stay intact.
+ if(!state||!session?.authenticated||!isChief()||ui.route!=='logbook'||sourceLogbook.viewerId!==currentUser().id)return;
+ const root=$('.logbook-page');if(!root)return;
+ const log=sourceLogbook,content=root.querySelector('.source-logbook');if(content){content.innerHTML=sourceLogbookEntries();content.setAttribute('aria-busy',String(log.loading));}
+ const error=root.querySelector('[data-logbook-page-error]');if(error){error.textContent=log.error;error.hidden=!log.error;}
+ const worker=root.querySelector('[data-logbook-worker]');if(worker)worker.hidden=log.workerOnline;
+ const filter=root.querySelector('[data-logbook-filter="status"]');if(filter)filter.value=log.status;
+ const total=root.querySelector('[data-logbook-total]');if(total)total.textContent=log.entries.length+' van '+log.total+' pogingen · maximaal de laatste 100 per selectie';
+ const refresh=$('[data-action="refresh-source-logbook"]');if(refresh){refresh.disabled=log.loading||!!log.busyJobId;refresh.textContent=log.loading?'Vernieuwen…':'Vernieuwen';}
+ const more=root.querySelector('[data-action="more-source-logbook"]');if(more){more.hidden=!log.hasMore;more.disabled=log.loading||!!log.busyJobId;more.textContent=log.loading?'Laden…':'Meer laden';}
+}
+async function refreshSourceLogbook({append=false,quiet=false}={}){
+ if(!sourceLogbookContext()||ui.route!=='logbook')return;
+ const log=sourceLogbook,viewerId=log.viewerId,version=++sourceLogbookVersion,status=log.status,source=log.source;
+ const offset=append?log.entries.length:0;
+ log.loading=true;log.error='';updateSourceLogbookView();
+ const query=new URLSearchParams({status,limit:quiet?String(Math.max(20,log.entries.length)): '20',offset:String(offset)});if(source!=='all')query.set('sourceId',source);
+ const current=()=>sourceLogbook===log&&version===sourceLogbookVersion&&session?.authenticated&&state&&isChief()&&currentUser().id===viewerId;
+ try{
+  const result=await api('/api/source-logbook?'+query);if(!current())return;
+  log.entries=append?[...new Map([...log.entries,...result.entries].map(entry=>[entry.id,entry])).values()]:result.entries;
+  log.total=result.total;log.hasMore=result.hasMore;log.workerOnline=result.workerOnline;
+ }catch(error){if(current())log.error=error.message||'Het logboek kon niet worden geladen.';}
+ finally{if(current()){log.loading=false;log.loaded=true;updateSourceLogbookView();}}
+}
+async function retrySourceImport(id,jobId){
+ if(!sourceLogbookContext()||sourceLogbook.busyJobId)return;
+ const log=sourceLogbook,entry=log.entries.find(entry=>entry.id===jobId&&entry.sourceId===id),startingStatus=log.status,startingSource=log.source;if(!entry?.canRetry)return;
+ log.busyJobId=jobId;log.error='';updateSourceLogbookView();
+ try{
+  await mutate('source.scraper.retry',{id,jobId});
+  if(sourceLogbook!==log||!state||!isChief()||currentUser().id!==log.viewerId)return;
+  if(log.status===startingStatus&&log.source===startingSource)log.status='all';toast('Nieuwe ophaalpoging ingepland.');await refreshSourceLogbook();
+ }catch(error){if(sourceLogbook===log)log.error=error.message||'De nieuwe poging kon niet worden ingepland.';}
+ finally{if(sourceLogbook===log){log.busyJobId=null;updateSourceLogbookView();}}
+}
+
 function priorityBadge(p){return `<span class="priority ${p}">${esc(priorityNames[p])}</span>`;}
 function heading(title,subtitle,actions=''){return `<div class="page-heading"><div><div class="eyebrow">${esc(company().name)}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="heading-actions">${actions}</div></div>`;}
 function empty(message='Geen leads gevonden.',action=''){return `<div class="empty-state">${icon('layers')}<h3>${message}</h3><p>Pas je filters aan of voeg een nieuwe lead toe.</p>${action}</div>`;}
@@ -310,10 +389,11 @@ function render(){
  if(!state||!session?.authenticated){renderAuth();return;}
  if(!isChief())ui.companyId=currentUser().companyId;if(!state.companies.some(c=>c.id===ui.companyId))ui.companyId=state.companies[0].id;
  const page=routes.find(r=>r[0]===ui.route)||routes[0],due=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()).length;
- $('#app').innerHTML=`<div class="app-shell"><aside class="sidebar ${ui.mobile?'open':''}"><a href="#dashboard" class="brand" data-route="dashboard">${dashboardBrand()}</a><div class="nav-label">WERKPLEK</div><nav class="nav-group" aria-label="Hoofdnavigatie">${routes.slice(0,7).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}" ${ui.route===id?'aria-current="page"':''}>${icon(i)}<span>${label}</span>${id==='callbacks'&&due?`<span class="nav-count">${due}</span>`:''}</button>`).join('')}</nav><div class="nav-label">BEHEER</div><nav class="nav-group" aria-label="Beheer">${routes.slice(7).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}">${icon(i)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-footer"><button class="profile-button" data-action="account"><span class="avatar">${esc(currentUser().name.split(' ').map(s=>s[0]).slice(0,2).join(''))}</span><span><strong>${esc(currentUser().name)}</strong><small>${esc(currentUser().role)}</small></span>${icon('settings')}</button></div></aside><div class="workspace"><header class="topbar"><button class="button icon menu-toggle" data-action="menu" aria-label="Menu openen">${icon('menu')}</button><div class="breadcrumbs"><span>Werkplek</span>${icon('chevron')}<strong>${esc(page[1])}</strong></div><div class="top-actions"><span class="badge green hide-mobile">Gedeelde werkplek</span>${companyLogoSource(company())?`<img class="workspace-company-logo" src="${esc(companyLogoSource(company()))}" alt="Logo van ${esc(company().name)}">`:''}<label class="sr-only" for="company-switch">Actief bedrijf</label><select id="company-switch" class="company-switch" data-field="company" ${!isChief()?'disabled':''}>${state.companies.filter(c=>isChief()||c.id===ui.companyId).map(c=>`<option value="${c.id}" ${c.id===ui.companyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select><button class="button icon" data-route="callbacks" aria-label="Terugbelafspraken, ${due} verlopen">${icon('bell')}${due?'<span class="notification-dot"></span>':''}</button></div></header><main id="main" class="main${ui.route==='calls'||ui.route==='leads'?' main-full-width':''}" tabindex="-1">${renderPage()}<footer class="page-footer"><span>Bouwberichten Dashboard</span><span>Gedeeld opgeslagen · ${esc(company().name)} · tijdzone Amsterdam</span></footer></main></div></div>`;
+ $('#app').innerHTML=`<div class="app-shell"><aside class="sidebar ${ui.mobile?'open':''}"><a href="#dashboard" class="brand" data-route="dashboard">${dashboardBrand()}</a><div class="nav-label">WERKPLEK</div><nav class="nav-group" aria-label="Hoofdnavigatie">${routes.slice(0,7).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}" ${ui.route===id?'aria-current="page"':''}>${icon(i)}<span>${label}</span>${id==='callbacks'&&due?`<span class="nav-count">${due}</span>`:''}</button>`).join('')}</nav><div class="nav-label">BEHEER</div><nav class="nav-group" aria-label="Beheer">${routes.slice(7).filter(([id])=>id!=='logbook'||isChief()).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}">${icon(i)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-footer"><button class="profile-button" data-action="account"><span class="avatar">${esc(currentUser().name.split(' ').map(s=>s[0]).slice(0,2).join(''))}</span><span><strong>${esc(currentUser().name)}</strong><small>${esc(currentUser().role)}</small></span>${icon('settings')}</button></div></aside><div class="workspace"><header class="topbar"><button class="button icon menu-toggle" data-action="menu" aria-label="Menu openen">${icon('menu')}</button><div class="breadcrumbs"><span>Werkplek</span>${icon('chevron')}<strong>${esc(page[1])}</strong></div><div class="top-actions"><span class="badge green hide-mobile">Gedeelde werkplek</span>${companyLogoSource(company())?`<img class="workspace-company-logo" src="${esc(companyLogoSource(company()))}" alt="Logo van ${esc(company().name)}">`:''}<label class="sr-only" for="company-switch">Actief bedrijf</label><select id="company-switch" class="company-switch" data-field="company" ${!isChief()?'disabled':''}>${state.companies.filter(c=>isChief()||c.id===ui.companyId).map(c=>`<option value="${c.id}" ${c.id===ui.companyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select><button class="button icon" data-route="callbacks" aria-label="Terugbelafspraken, ${due} verlopen">${icon('bell')}${due?'<span class="notification-dot"></span>':''}</button></div></header><main id="main" class="main${ui.route==='calls'||ui.route==='leads'?' main-full-width':''}" tabindex="-1">${renderPage()}<footer class="page-footer"><span>Bouwberichten Dashboard</span><span>Gedeeld opgeslagen · ${esc(company().name)} · tijdzone Amsterdam</span></footer></main></div></div>`;
  renderOverlay();renderToasts();save();
+ if(ui.route==='logbook'&&isChief()&&!sourceLogbook.loaded&&!sourceLogbook.loading)void refreshSourceLogbook();
 }
-function renderPage(){switch(ui.route){case'leads':return leadsPage();case'kanban':return kanbanPage();case'calls':return callsPage();case'callbacks':return callbacksPage();case'feed':return feedPage();case'reports':return reportsPage();case'sources':return sourcesPage();case'team':return teamPage();case'settings':return settingsPage();default:return dashboardPage();}}
+function renderPage(){switch(ui.route){case'leads':return leadsPage();case'kanban':return kanbanPage();case'calls':return callsPage();case'callbacks':return callbacksPage();case'feed':return feedPage();case'reports':return reportsPage();case'sources':return sourcesPage();case'logbook':return sourceLogbookPage();case'team':return teamPage();case'settings':return settingsPage();default:return dashboardPage();}}
 function dashboardPage(){const all=state.leads,available=all.filter(l=>eligible(l).allowed),todo=callbacks(),due=todo.filter(c=>new Date(c.dueAt)<=Date.now()),commitments=all.filter(l=>work(l).commitment).length,calc=all.filter(l=>work(l).calculation).length;return `${heading('Elke kans in beeld.','Van eerste signaal naar een goed gesprek. Dit is je werkvoorraad voor vandaag.',btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary'))}<div class="stats-grid">${stat('Centrale leads',all.length,`${leadSources().length} bronnen`,'layers','blue')}${stat('Nu te bellen',available.length,`${all.length-available.length} binnen de belwachttijd`,'phone','green')}${stat('Terugbelafspraken',todo.length,`${due.length} vragen nu aandacht`,'calendar','amber')}${stat('Toezeggingen',commitments,`${calc} klaar voor calculatie`,'chart','blue')}</div><div class="content-grid"><section class="panel"><div class="panel-head"><div><div class="eyebrow">AAN DE SLAG</div><h2>Kansen om op te pakken</h2></div><button class="button ghost small" data-route="leads">Alle leads bekijken</button></div><div class="filter-row dashboard-filters"><div class="tabs"><button class="tab ${ui.availability==='all'?'active':''}" data-action="dash-filter" data-value="all">Alle kansen</button><button class="tab ${ui.availability==='available'?'active':''}" data-action="dash-filter" data-value="available">Nu belbaar</button><button class="tab ${ui.owner==='me'?'active':''}" data-action="dash-filter" data-value="me">Mijn leads</button></div></div>${leadTable(filteredLeads().slice(0,6),true)}<div class="panel-bottom"><span>${filteredLeads().length} kansen in je selectie</span><button class="button secondary small" data-route="calls">${icon('phone')} Open mijn bellijst</button></div></section><div class="dashboard-right"><section class="panel"><div class="panel-head"><h2>Je terugbelmomenten</h2><span class="badge amber">${due.length} openstaand</span></div><div class="panel-body callback-list">${todo.slice(0,3).map(callbackCard).join('')||'<p class="muted">Je planning is helemaal bij.</p>'}</div><button class="panel-link" data-route="callbacks">Bekijk de volledige planning</button></section><section class="panel"><div class="panel-head"><h2>Laatste signalen</h2>${icon('activity')}</div><div class="news-list">${feedItems().slice(0,3).map(newsItem).join('')}</div><button class="panel-link" data-route="feed">Open de nieuwsfeed</button></section></div></div><section class="sources-strip"><div>${icon('link')}<strong>Je bronnen, op één plek</strong><span class="muted">Beheer de importinstellingen per bron.</span></div><div>${leadSources().map(s=>`${sourceBadge(s.id)}<span class="muted source-demo">${sourceImportStatus(s).label}</span>`).join('')}<button class="button ghost small" data-route="sources">Beheer bronnen</button></div></section>`;}
 function stat(label,value,meta,i,tone){return `<div class="stat-card"><div class="stat-top"><span class="stat-label">${label}</span><span class="stat-icon ${tone}">${icon(i)}</span></div><div class="stat-value">${value}</div><div class="stat-meta">${meta}</div></div>`;}
 function filters(){return `<div class="toolbar"><label class="search">${icon('search')}<input id="lead-search" type="search" placeholder="Zoek project, organisatie, plaats of Bouwberichten-ID…" aria-label="Zoek leads" data-field="query" value="${esc(ui.query)}"></label>${selectFilter('source','Bron',[['all','Alle bronnen'],...leadSourceOptions()])}${selectFilter('priority','Prioriteit',[['all','Alle prioriteiten'],...Object.entries(priorityNames)])}${selectFilter('status','Status',[['all','Alle statussen'],...company().columns.map(c=>[c.id,c.name])])}${selectFilter('owner','Verkoper',[['all','Alle verkopers'],['me','Mijn leads'],...activeUsers().map(u=>[u.id,u.name])])}<button class="button ghost small" data-action="reset-filters">Wis filters</button></div>`;}
@@ -653,6 +733,9 @@ document.addEventListener('click',async e=>{
    case'demo-info':case'account':case'columns':case'new-company':case'invite':case'new-source':case'source-config':case'edit-user':
     if(['new-company','new-source','source-config','edit-user'].includes(a)&&!isChief())throw Error('Deze actie is voor de hoofdbeheerder.');
     if(['columns','invite'].includes(a)&&!canManage())throw Error('Je hebt geen beheerrol.');openModal(a,id);break;
+   case'refresh-source-logbook':await refreshSourceLogbook();break;
+   case'more-source-logbook':await refreshSourceLogbook({append:true});break;
+   case'retry-source-import':await retrySourceImport(id,target.dataset.jobId);break;
    case'source-scraper':{if(!isChief())throw Error('Alleen de hoofdbeheerder kan automatisch ophalen instellen.');if(!leadSources().some(s=>s.id===id&&sourceProvider(s)==='bouwberichten'))throw Error('Automatisch ophalen is alleen beschikbaar voor Bouwberichten-bronnen.');openModal('source-scraper',id);break;}
    case'test-source-scraper':await scraperAction('source.scraper.test',id);toast('Proef met 5 projecten ingepland.');break;
    case'save-source-scraper-time':{const source=leadSources().find(source=>source.id===id);await saveScraperSchedule(id,!!source?.scraper?.scheduleEnabled,{timeOnly:true});break;}
@@ -723,6 +806,7 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',async e=>{
  const el=e.target;if(!state)return;
  if(el.dataset.field==='query')return;
+ if(el.hasAttribute('data-logbook-filter')){if(!isChief())return;const key=el.dataset.logbookFilter;if(['status','source'].includes(key)){sourceLogbook[key]=el.value;sourceLogbook.entries=[];sourceLogbook.total=0;sourceLogbook.hasMore=false;await refreshSourceLogbook();}return;}
  if(el.hasAttribute('data-account-role')){updateAccountCompanyField(el);return;}
  if(el.hasAttribute('data-scraper-schedule')){await saveScraperSchedule(el.dataset.scraperSchedule,el.checked);return;}
  if(el.hasAttribute('data-scraper-time')){editScraperScheduleTime(el);return;}
@@ -792,4 +876,4 @@ function exportLeads(){csv(`bouwberichten-${ui.route==='calls'?'bellijst':'leads
 function exportReport(){const cid=isChief()?(ui.reportCompany==='current'?company().id:ui.reportCompany):company().id;const rows=reportRows(state,{companyId:cid,sellerId:ui.reportSeller,source:ui.reportSource,from:ui.reportFrom,to:ui.reportTo});csv('bouwberichten-conversierapport.csv',[['Bedrijf','Verkoper','Bron','Toegewezen leads','Gebeld','Toezeggingen','Calculaties','Conversie (%)'],...rows.map(r=>[r.companyName,r.sellerName,reportSourceLabel(r),r.total,r.contacted,r.commitments,r.calculations,Math.round(r.conversion)])]);}
 initialize();
 setInterval(refreshScraperModal,10000);
-setInterval(async()=>{if(!session?.authenticated||pendingMutations||document.hidden)return;try{const editing=!!(ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea'));await refreshState(ui.companyId,{renderPage:!editing,preserveEditing:true});}catch(error){if(state)toast(error.message,'amber');}},30000);
+setInterval(async()=>{if(!session?.authenticated||pendingMutations||document.hidden)return;try{const editing=!!(ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea'));await refreshState(ui.companyId,{renderPage:!editing,preserveEditing:true});if(ui.route==='logbook'&&isChief()&&!sourceLogbook.loading&&!sourceLogbook.busyJobId)await refreshSourceLogbook({quiet:true});}catch(error){if(state)toast(error.message,'amber');}},30000);

@@ -274,3 +274,17 @@
 .project-date-arrows button:hover{background:#eef4fa}
 .project-date-arrows button[aria-pressed=true]{border-color:#2759a6;background:#e3edfb;color:#1748a4}
 .main.main-full-width{max-width:none;margin-inline:0}
+
+.source-logbook{display:grid;gap:14px;min-width:0}
+.logbook-filters{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px;margin:0 0 18px;min-width:0}
+.logbook-filters>.field{flex:1 1 190px;max-width:320px;margin:0;min-width:0}
+.logbook-filters select{width:100%;min-height:44px}
+.logbook-entry{padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:var(--shadow);min-width:0;overflow-wrap:anywhere}
+.logbook-entry-head{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px 14px}
+.logbook-entry h2,.logbook-entry h3{margin:0 0 7px;font-size:17px;line-height:1.4;color:#183039}
+.logbook-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;margin:5px 0;color:#526c87;font-size:14px;line-height:1.6}
+.logbook-error{min-width:0;margin:13px 0 0;padding:12px 14px;border:1px solid #edc9c4;border-radius:8px;background:#fff3f1;color:#963e34;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.logbook-error p{margin:0}.logbook-error p+p{margin-top:7px}
+.logbook-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-top:14px}
+.logbook-actions .button{min-height:44px;max-width:100%;white-space:normal;text-align:center}
+@media(max-width:600px){.logbook-entry{padding:15px}.logbook-filters>.field{flex-basis:100%;max-width:none}.logbook-actions>.button{flex:1 1 100%}}

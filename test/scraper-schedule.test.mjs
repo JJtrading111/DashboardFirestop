@@ -151,7 +151,8 @@ test('old SQLite rows migrate without moving their first run or changing active 
   db.prepare("INSERT INTO scraper_sources(source_id,status) VALUES('b','ready')").run();
   original={...db.prepare("SELECT * FROM scraper_sources WHERE source_id='a'").get()};
  }});
- const current={...env.config('a')};const {schedule_time,last_schedule_day,...legacyColumns}=current;
+ const current={...env.config('a')};const {schedule_time,last_schedule_day,configuration_version,...legacyColumns}=current;
+ assert.equal(configuration_version,0);
  assert.deepEqual(legacyColumns,original);assert.equal(schedule_time,'02:30');assert.equal(last_schedule_day,null);
  assert.equal(env.summary().nextRunAt,iso(next));assert.equal(env.summary().scheduleEnabled,true);assert.equal(env.summary().status,'running');
  assert.equal(env.summary('b').scheduleTime,'14:22');
