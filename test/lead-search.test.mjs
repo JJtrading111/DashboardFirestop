@@ -11,7 +11,7 @@ const executablePath=process.env.PRESENTATION_TEST_BROWSER_PATH||[
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',chromium?.executablePath()
 ].find(value=>value&&existsSync(value));
 const origin='https://lead-search.example.test';
-const files=Object.fromEntries(await Promise.all(['index.html','app.mjs','model.mjs','styles.css','bouwberichten-filters.mjs'].map(async name=>['/'+name,await readFile(new URL('../public/'+name,import.meta.url),'utf8')])));
+const files=Object.fromEntries(await Promise.all(['index.html','app.mjs','model.mjs','admin-overview.mjs','call-report.mjs','selected-contact.mjs','styles.css','bouwberichten-filters.mjs'].map(async name=>['/'+name,await readFile(new URL('../public/'+name,import.meta.url),'utf8')])));
 const targetTitle='Appartementen Parkzicht',otherTitle='Renovatie Dorpshuis',fallbackTitle='Schoolgebouw Waterkant';
 function stateFixture(){
  const state=createDemoState(),date='2026-11-24T12:00:00.000Z';

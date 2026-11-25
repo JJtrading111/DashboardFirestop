@@ -312,3 +312,81 @@
 .auth-card [data-activation-password-error]{margin:0;padding:11px 13px;border:1px solid #ecc7c2;border-radius:8px;background:#fff1ef;color:#983d32;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
 .auth-card input[aria-invalid=true]{border-color:#b64f43;box-shadow:0 0 0 1px #b64f431f}
 @media(max-width:400px){#activation-password-requirements{padding:11px 12px}}
+
+.admin-overview{min-width:0}
+.admin-overview-summary{margin-bottom:22px}
+.admin-overview-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 16px;padding:16px 18px;margin-bottom:20px;background:#fff;border:1px solid var(--line);border-radius:12px;min-width:0}
+.admin-overview-filters>.field{flex:1 1 170px;max-width:300px;min-width:0;margin:0}
+.admin-overview-filters .field+.field{margin-top:0}
+.admin-overview-filters input,.admin-overview-filters select{display:block;width:100%;min-width:0;min-height:44px}
+.admin-overview-filters>.button{min-height:44px;max-width:100%;white-space:normal}
+.admin-overview-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,340px);gap:20px;align-items:start;min-width:0}
+.admin-overview-grid>*{min-width:0}
+.admin-overview .panel+.panel{margin-top:20px}
+.admin-company-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:15px;min-width:0;margin-bottom:22px}
+.admin-company-card{min-width:0;padding:18px;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:var(--shadow);overflow-wrap:anywhere}
+.admin-company-card h2,.admin-company-card h3{font-size:17px;line-height:1.4;margin:0;color:#183039}
+.admin-company-head{display:flex;align-items:center;gap:10px;min-width:0;margin-bottom:13px}
+.admin-company-head>div{min-width:0;flex:1}
+.admin-company-head .company-logo{flex:0 0 40px}
+.admin-company-head p{margin:3px 0 0;font-size:13px;line-height:1.5;color:#526c87}
+.admin-company-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;margin:14px 0}
+.admin-company-metrics>div{min-width:0}
+.admin-company-metrics dt{font-size:13px;line-height:1.5;color:#526c87}
+.admin-company-metrics dd{margin:2px 0 0;font-weight:700;font-size:21px;line-height:1.25;color:#183039}
+.admin-company-columns{display:flex;flex-wrap:wrap;gap:6px;min-width:0;margin-top:12px}
+.admin-company-columns>span,.admin-company-columns .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
+.admin-company-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px}
+.admin-company-actions .button{max-width:100%;min-height:44px;white-space:normal}
+.admin-company-last{font-size:13px;line-height:1.6;color:#526c87;margin:11px 0 0}
+.admin-company-table{width:100%;min-width:880px}
+.admin-company-table th{vertical-align:bottom;white-space:normal}
+.admin-company-table td{vertical-align:top}
+.admin-company-table .company-logo{display:inline-flex;vertical-align:middle;margin-right:8px}
+.admin-company-table .button{min-height:40px;white-space:normal}
+.admin-company-table .admin-company-columns{max-width:300px;margin-top:7px}
+.admin-overview .table-wrap{max-width:100%;overflow-x:auto}
+.admin-activity-list,.admin-attention-list{min-width:0}
+.admin-activity-item,.admin-attention-item{min-width:0;padding:15px 18px;border-bottom:1px solid #e1e8f0;overflow-wrap:anywhere}
+.admin-activity-item:last-child,.admin-attention-item:last-child{border-bottom:0}
+.admin-activity-item h3,.admin-attention-item h3{margin:3px 0;font-size:15px;line-height:1.5;color:#213d59}
+.admin-activity-item p,.admin-attention-item p{margin:5px 0;color:#405c79;font-size:14px;line-height:1.6}
+.admin-activity-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px 10px;min-width:0;font-size:12px;line-height:1.6;color:#526c87}
+.admin-activity-meta .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
+.admin-activity-item .text-link,.admin-attention-item .text-link{min-height:32px;max-width:100%;text-align:left;overflow-wrap:anywhere}
+.admin-attention-item .button{max-width:100%;min-height:40px;white-space:normal;text-align:left}
+.admin-overview .empty-state{padding:28px 18px}
+.admin-overview-note{color:#526c87;font-size:13px;line-height:1.7;overflow-wrap:anywhere;margin:14px 0 0}
+.admin-overview-return,.admin-return-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0 0 18px;padding:12px 14px;background:#edf3ff;border:1px solid #cbdcfa;border-radius:9px;font-size:14px;color:#2c4e7a}
+.admin-overview-return .button,.admin-return-bar .button{min-height:40px;max-width:100%;white-space:normal}
+@media(max-width:1150px){.admin-overview-grid{grid-template-columns:minmax(0,1fr)}.admin-overview-grid>.admin-overview-side{order:-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.admin-overview-grid>.admin-overview-side>.panel{margin:0}}
+@media(max-width:620px){.admin-overview-filters{padding:14px;gap:12px}.admin-overview-filters>.field{flex-basis:100%;max-width:none}.admin-overview-filters>.button{width:100%}.admin-company-grid{grid-template-columns:minmax(0,1fr)}.admin-company-card{padding:15px}.admin-overview-grid>.admin-overview-side{display:block}.admin-overview-grid>.admin-overview-side>.panel+.panel{margin-top:18px}.admin-company-actions>.button{flex:1 1 100%}.admin-activity-item,.admin-attention-item{padding:14px 15px}.admin-overview-return>.button,.admin-return-bar>.button{width:100%}}
+
+.call-report-page{min-width:0}
+.call-report-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 20px}
+.call-report-tabs .tab,.call-report-tabs .button{min-height:44px;max-width:100%;white-space:normal}
+.call-report-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 15px;padding:16px 18px;min-width:0;margin-bottom:20px}
+.call-report-filters>.field{flex:1 1 170px;max-width:290px;min-width:0;margin:0}
+.call-report-filters .field+.field{margin-top:0}
+.call-report-filters input,.call-report-filters select{display:block;width:100%;min-width:0;min-height:44px}
+.call-report-filters .button{min-height:44px;max-width:100%;white-space:normal}
+.call-report-page .table-wrap{min-width:0;max-width:100%;overflow-x:auto}
+.call-report-table{width:100%;font-variant-numeric:tabular-nums}
+.call-report-table th,.call-report-table td{min-width:66px;text-align:right;white-space:nowrap}
+.call-report-table th{vertical-align:bottom}
+.call-report-table th:first-child,.call-report-table td:first-child{position:sticky;left:0;z-index:1;min-width:185px;max-width:240px;text-align:left;white-space:normal;overflow-wrap:anywhere;background:#fff;border-right:1px solid #dce5f0}
+.call-report-table th:last-child,.call-report-table td:last-child{position:sticky;right:0;z-index:1;min-width:75px;background:#f2f6fc;color:#25466e;font-weight:700;border-left:1px solid #dce5f0}
+.call-report-table thead th:first-child,.call-report-table thead th:last-child{z-index:2}
+.call-report-table td:first-child>strong{display:block;font-size:14px;line-height:1.5;color:#203e5b}
+.call-report-table td:first-child>small,.call-report-table td:first-child>.muted{display:block;font-size:12px;line-height:1.5;margin-top:3px}
+.call-report-table tbody tr:hover>td{background-color:#f7faff}
+.call-report-table tbody tr:hover>td:last-child{background-color:#edf3fd}
+.call-report-table tfoot th,.call-report-table tfoot td{background:#edf3fc;font-weight:700;border-top:1px solid #cfdff1;color:#234875}
+.call-report-table tfoot th:first-child,.call-report-table tfoot td:first-child{background:#edf3fc}
+.call-report-table tfoot th[colspan]{position:static}
+.call-report-scroll-hint{margin:0;padding:10px 18px;border-bottom:1px solid #e1e8f0;color:#526c87;font-size:13px;line-height:1.6}
+.call-report-empty{padding:28px 18px;color:#526c87;font-size:14px;line-height:1.7}
+.call-report-definition{margin:15px 0 0;padding:14px 16px;background:#edf4fc;border:1px solid #d8e5f4;border-radius:9px;color:#45617f;font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+.call-report-definition strong{color:#27476b}.call-report-definition p{margin:5px 0 0}
+@media(max-width:620px){.call-report-filters{padding:14px}.call-report-filters>.field{flex-basis:100%;max-width:none}.call-report-filters>.button{width:100%}.call-report-table th:first-child,.call-report-table td:first-child{min-width:150px;max-width:185px}.call-report-table th,.call-report-table td{padding-inline:11px;min-width:58px}.call-report-table th:last-child,.call-report-table td:last-child{min-width:65px}.call-report-tabs .tab,.call-report-tabs .button{flex:1 1 140px}}
+.modal[data-selected-contact-confirm]{left:50vw;top:50vh;top:50dvh}

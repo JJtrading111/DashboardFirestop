@@ -8,6 +8,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {callOutcomeNames,createDemoState,getWorkspace,recordCall,transferUser} from './public/model.mjs';
 import {normalizeBouwberichtenFilterUrl} from './public/bouwberichten-filters.mjs';
 import {createScraperBroker} from './scraper/broker.mjs';
+import {effectiveLeadContact,hasLeadContact,contactFingerprint,partyContact} from './public/selected-contact.mjs';
 
 const scrypt=promisify(scryptCallback), ROOT=path.dirname(fileURLToPath(import.meta.url));
 const DAY=86400000,SESSION_AGE=12*60*60*1000,REMEMBERED_SESSION_AGE=30*DAY,INVITE_AGE=7*DAY;
@@ -376,6 +377,19 @@ export function createApp(options={}){
     break;
    }
    case'workspace.update':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');w[field]=field==='ownerId'?(p.value||null):p.value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);break;}
+   case'workspace.contact.select':{
+    const lead=requireLead(s,p.leadId),workspace=getWorkspace(s,cid,lead.id);
+    if(Object.keys(p).some(key=>!['leadId','partyIndex','partyFingerprint','expectedContact','confirmed'].includes(key))||!Number.isInteger(p.partyIndex)||typeof p.confirmed!=='boolean'||typeof p.partyFingerprint!=='string'||p.partyFingerprint.length>4096||typeof p.expectedContact!=='string'||p.expectedContact.length>4096)fail(400,'Kies een geldige betrokken partij en bevestig de huidige contactgegevens.');
+    const selected=partyContact(lead,p.partyIndex);if(!selected)fail(400,'Deze betrokken partij is niet beschikbaar om als contact te selecteren.');
+    if(p.partyFingerprint!==contactFingerprint(selected))fail(409,'De gegevens van deze betrokken partij zijn gewijzigd. Open de lead opnieuw en kies het contact nogmaals.');
+    const current=effectiveLeadContact(lead,workspace);
+    if(p.expectedContact!==contactFingerprint(current))fail(409,'Het contact voor deze lead is inmiddels gewijzigd. Open de lead opnieuw en controleer de huidige gegevens.');
+    if(workspace.selectedContact&&contactFingerprint(current)===contactFingerprint(selected)){result={changed:false,selectedContact:workspace.selectedContact};break;}
+    if(hasLeadContact(current)&&!p.confirmed)fail(409,'Bevestig eerst dat je het huidige contact voor deze lead wilt vervangen.');
+    workspace.selectedContact={...selected,selectedAt:iso(Date.now()),selectedById:actor.id,selectedByName:actor.name};
+    addFeed(s,actor,cid,`Contact voor deze lead geselecteerd: ${selected.name}`,lead.id);
+    result={changed:true,selectedContact:workspace.selectedContact};break;
+   }
    case'workspace.save':{
     const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),changes=p.changes;
     const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype;
@@ -471,7 +485,7 @@ export function createApp(options={}){
   }
   writeState(s);const responseActor=s.users.find(u=>u.id===actor.id);const responseCompany=responseActor.role==='hoofdbeheerder'?cid:responseActor.companyId;return{...scoped(s,responseActor,responseCompany),...(result?{result}:{})};
  });}
- const assets=new Map([['/','index.html'],['/index.html','index.html'],['/login','index.html'],['/login/','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs'],['/bouwberichten-filters.mjs','bouwberichten-filters.mjs']]);
+ const assets=new Map([['/','index.html'],['/index.html','index.html'],['/login','index.html'],['/login/','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs'],['/admin-overview.mjs','admin-overview.mjs'],['/call-report.mjs','call-report.mjs'],['/selected-contact.mjs','selected-contact.mjs'],['/bouwberichten-filters.mjs','bouwberichten-filters.mjs']]);
  const contentTypes={'.html':'text/html; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
  function headers(res,isApi=false){res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");res.setHeader('Cache-Control',isApi?'no-store':'no-cache');if(secureCookies)res.setHeader('Strict-Transport-Security','max-age=31536000');}
  function json(res,status,data){headers(res,true);res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
