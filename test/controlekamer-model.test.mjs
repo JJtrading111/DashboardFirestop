@@ -45,6 +45,30 @@ test('control room derives exact real daily calls, notes and status and never mu
  assert.deepEqual(data.typeCounts,{all:8,note:5,status:3});assert.deepEqual(state,before);
 });
 
+test('chief administrators stay outside the calling team, health ratio and zero-call actions even when assigned or historically called',()=>{
+ const state=fixture();Object.assign(state.users.find(user=>user.id==='chief'),{companyId:'a',role:'hoofdbeheerder'});
+ state.users.push({id:'calling-chief',name:'Overkoepelende beheerder',role:'hoofdbeheerder',companyId:'b',status:'actief'});
+ const call={id:'chief-call',companyId:'b',leadId:'three',userId:'calling-chief',userName:'Overkoepelende beheerder',at:'2026-11-25T11:00:00Z'};
+ state.callLog.push(call);state.workspaces.b.three.calls.push({...call});const before=structuredClone(state);
+ for(const companyId of ['all','a','b']){
+  const data=buildControlekamer(state,{now:NOW,companyId}),report=buildCallReport({...state,archivedCompanies:[]},{now:NOW,companyId,from:data.today,to:data.today});
+  assert.equal(data.team.some(member=>['chief','calling-chief'].includes(member.id)),false);
+  assert.equal(data.kpis.teamSize,companyId==='all'?4:companyId==='a'?2:1);
+  assert.equal(data.kpis.activeCallers,companyId==='all'?2:1);
+  assert.equal(data.kpis.calls,report.totals.calls,'Actual historical calls remain in reporting totals');
+  assert.equal(data.actions.filter(action=>action.kind==='report').some(action=>/Hoofdbeheerder|Overkoepelende beheerder/.test(action.text)),false);
+ }
+ assert.deepEqual(state,before);
+});
+
+test('a company with only chief administrators has no calling team or missing-caller warnings',()=>{
+ const state=fixture();state.users=state.users.filter(user=>user.companyId!=='c');
+ state.users.push({id:'only-chief',name:'Hoofdbeheerder',role:'hoofdbeheerder',companyId:'c',status:'actief'});
+ const data=buildControlekamer(state,{now:NOW,companyId:'c'});
+ assert.equal(data.team.length,0);assert.equal(data.kpis.teamSize,0);assert.equal(data.kpis.activeCallers,0);
+ assert.equal(data.actions.some(action=>action.kind==='report'),false);assert.equal(data.health.find(item=>item.key==='team').status,'neutral');
+});
+
 test('every data component follows the company scope while central source messages appear only under all companies',()=>{
  const state=fixture(),a=buildControlekamer(state,{now:NOW,companyId:'a'}),c=buildControlekamer(state,{now:NOW,companyId:'c'});
  assert.deepEqual(a.kpis,{calls:3,notes:3,status:2,activeCallers:1,teamSize:2});assert.equal(a.selectedCompanies.length,1);assert.equal(a.companies.length,3);

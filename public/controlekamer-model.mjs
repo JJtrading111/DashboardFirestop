@@ -32,12 +32,12 @@ export function buildControlekamer(state,{now=Date.now(),companyId='all',type='a
  for(const company of companies)company.callsToday=buildCallReport(reportState,{now:instant,companyId:company.id,groupBy:'day',from:today,to:today}).totals.calls;
  const users=new Map(list(state?.users).filter(user=>validId(user?.id)).map(user=>[user.id,user]));
  const reportRows=new Map(report.rows.map(row=>[row.sellerId,row]));
- const team=[...users.values()].filter(user=>user.status==='actief'&&selectedIds.has(user.companyId)).map(user=>{
+ const team=[...users.values()].filter(user=>user.role!=='hoofdbeheerder'&&user.status==='actief'&&selectedIds.has(user.companyId)).map(user=>{
   const company=companyMap.get(user.companyId),row=reportRows.get(user.id);
   return{id:user.id,userId:user.id,name:text(user.name)||row?.sellerName||'Naam niet vastgelegd',initials:initials(user.name),companyId:company.id,companyName:company.name,color:company.color,callsToday:row?.total||0,callCompanyIds:row?.companyIds||[],callCompanyNames:row?.companyNames||[],eligible:true,historical:false};
  });
  const eligibleIds=new Set(team.map(member=>member.id));
- for(const row of report.rows)if(row.total>0&&!eligibleIds.has(row.sellerId)){
+ for(const row of report.rows)if(row.total>0&&!eligibleIds.has(row.sellerId)&&users.get(row.sellerId)?.role!=='hoofdbeheerder'){
   const company=companyMap.get(row.companyIds[0]);
   team.push({id:row.sellerId,userId:row.sellerId,name:row.sellerName,initials:initials(row.sellerName),companyId:row.companyIds.length===1?row.companyIds[0]:'all',companyName:row.companyNames.join(', '),color:company?.color||'#245DE4',callsToday:row.total,callCompanyIds:[...row.companyIds],callCompanyNames:[...row.companyNames],eligible:false,historical:true});
  }
