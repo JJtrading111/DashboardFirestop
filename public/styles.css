@@ -432,5 +432,17 @@
 .admin-company-details{min-width:0;margin:0 0 22px;padding:15px 18px;border:1px solid var(--line);border-radius:10px;background:#f8faff}
 .admin-company-details>summary{font-size:15px;line-height:1.6;color:#2d4e73;font-weight:650;cursor:pointer}
 .admin-company-details[open]>.admin-company-grid{margin:14px 0 0}
+.deleted-leads-panel{min-width:0}
+.deleted-leads-panel .toolbar{flex-wrap:wrap}
+.deleted-leads-panel .search{flex:1 1 320px;min-width:0}
+.deleted-leads-panel .search input{width:100%;min-width:0}
+.deleted-leads-table{width:100%;table-layout:fixed}
+.deleted-leads-table th:nth-child(1){width:27%}
+.deleted-leads-table th:nth-child(2){width:18%}
+.deleted-leads-table th:nth-child(3){width:20%}
+.deleted-leads-table th:nth-child(4){width:35%}
+.deleted-leads-table td{white-space:normal;vertical-align:top;overflow-wrap:anywhere;line-height:1.65}
+.deleted-lead-reason{white-space:pre-wrap!important}
+@media(max-width:700px){.deleted-leads-panel .panel-head{flex-wrap:wrap;gap:10px}.deleted-leads-table,.deleted-leads-table tbody,.deleted-leads-table tr,.deleted-leads-table td{display:block;width:100%;min-width:0}.deleted-leads-table thead{display:none}.deleted-leads-table tr{padding:15px 17px;border-bottom:1px solid var(--line)}.deleted-leads-table tr:last-child{border-bottom:0}.deleted-leads-table td{padding:6px 0;border:0}.deleted-leads-table td::before{content:attr(data-label);display:block;font-size:12px;font-weight:600;color:#526c87;margin-bottom:3px}.deleted-leads-panel .toolbar>.button{width:100%}}
 @media(max-width:1100px){.admin-priority-grid,.admin-call-grid{grid-template-columns:minmax(0,1fr)}.admin-priority-grid .admin-attention-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.admin-priority-grid,.admin-call-grid{gap:16px}.admin-priority-grid .admin-attention-list{grid-template-columns:minmax(0,1fr)}.admin-priority-grid .admin-attention-item:nth-child(2n+1){border-right:0}.admin-staff-table th,.admin-staff-table td,.admin-company-calls-table th,.admin-company-calls-table td{padding:10px}.admin-staff-table th:last-child,.admin-staff-table td:last-child,.admin-company-calls-table th:nth-child(2),.admin-company-calls-table td:nth-child(2){width:80px}.admin-company-calls-table th:last-child,.admin-company-calls-table td:last-child{width:75px}.admin-call-period{width:100%}.admin-call-period select{flex:1 1 auto}}
