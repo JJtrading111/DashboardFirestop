@@ -22,7 +22,8 @@ const emptySourceLogbook=()=>({viewerId:null,entries:[],status:'failed',source:'
 let sourceLogbook=emptySourceLogbook();
 function clearSourceLogbook(){sourceLogbookVersion++;sourceLogbook=emptySourceLogbook();}
 let leadDraft=null,leadReturn=null;
-const leadFields=['status','priority','ownerId','commitment','calculation'];
+const leadContactFields=['contactName','contactEmail','contactPhone'];
+const leadFields=['status','priority','ownerId','commitment','calculation',...leadContactFields];
 const currentUser=()=>state.users.find(x=>x.id===ui.userId)||state.users[0];
 const isChief=()=>currentUser().role==='hoofdbeheerder';
 const canManage=()=>isChief()||currentUser().role==='bedrijfsbeheerder';
@@ -503,7 +504,7 @@ function renderOverlay(){
  if(ui.drawer&&!ui.modal)updateLeadSaveUI();
 }
 
-function leadValues(w){return Object.fromEntries(leadFields.map(field=>[field,['commitment','calculation'].includes(field)?!!w[field]:field==='ownerId'?w[field]||null:w[field]]));}
+function leadValues(w){return Object.fromEntries(leadFields.map(field=>[field,['commitment','calculation'].includes(field)?!!w[field]:field==='ownerId'?w[field]||null:leadContactFields.includes(field)?String(w[field]??''):w[field]]));}
 function getLeadDraft(leadId=ui.drawer,w=work(leadId)){
  if(!leadDraft||leadDraft.leadId!==leadId||leadDraft.companyId!==ui.companyId||leadDraft.userId!==ui.userId)leadDraft={leadId,companyId:ui.companyId,userId:ui.userId,base:leadValues(w),changes:{},note:'',noteId:null,saving:false,error:''};
  return leadDraft;
@@ -541,10 +542,14 @@ function updateLeadSaveUI(){
  const button=root.querySelector('[data-action="save-close-lead"]'),error=root.querySelector('.workbook-save-error');
  if(button){button.textContent=leadDraft.saving?'Opslaan…':'Opslaan en sluiten';button.setAttribute('aria-busy',String(leadDraft.saving));}
  if(error){error.textContent=leadDraft.error;error.hidden=!leadDraft.error;}
+ updateLeadContactUI();
  if(leadDraft.saving&&root.contains(focused))root.querySelector('#detail-title')?.focus({preventScroll:true});
 }
 async function saveLeadDraft({close=false}={}){
  const draft=captureLeadDraft();if(!draft||draft.saving)return;
+ updateLeadContactUI();
+ const invalidContact=[...$('.workbook-contact-person')?.querySelectorAll('input')??[]].find(input=>!input.checkValidity());
+ if(invalidContact){draft.error=invalidContact.dataset.work==='contactName'?'Vul de naam van de contactpersoon in.':invalidContact.dataset.work==='contactEmail'?'Vul een geldig e-mailadres in of laat het veld leeg.':'Controleer het rechtstreekse telefoonnummer.';updateLeadSaveUI();invalidContact.focus();invalidContact.reportValidity();return;}
  const note=draft.note.trim();if(!close&&!note){draft.error='Schrijf eerst een notitie.';updateLeadSaveUI();return;}
  if(note&&!draft.noteId)draft.noteId='note-'+crypto.randomUUID();
  const payload={leadId:draft.leadId,changes:{...draft.changes},...(note?{note:{id:draft.noteId,text:note}}:{})};
@@ -602,6 +607,26 @@ function workbookContactHTML(l,w,e){
  </section>`;
 }
 
+function contactPhoneNumber(w){const value=String(w.contactPhone||'').trim();return leadPhone({phone:/^(?:\+|00)/.test(value)?value.replace(/\(0\)/,''):value});}
+function contactPersonLinksHTML(l,values){
+ const saved=work(l),normalize=(field,value)=>field==='contactEmail'?String(value??'').trim().toLowerCase():String(value??'').trim();
+ const pending=leadContactFields.some(field=>normalize(field,values[field])!==normalize(field,saved[field]));
+ if(pending)return leadContactFields.some(field=>String(values[field]??'').trim())?'<span class="muted">Beschikbaar na opslaan.</span>':'';
+ const phone=contactPhoneNumber(saved),email=String(saved.contactEmail||'').trim(),name=String(saved.contactName||'').trim();
+ if(!name)return '';
+ const e=eligible(l);
+ return (email?'<a class="button secondary" href="mailto:'+esc(encodeURIComponent(email).replace(/%40/g,'@'))+'" aria-label="E-mail '+esc(name)+'">'+icon('mail')+' '+esc(email)+'</a>':'')+(phone?(e.allowed?'<a class="button secondary" href="tel:'+esc(phone)+'" data-action="call-link" data-id="'+esc(l.id)+'" aria-label="Bel '+esc(name)+' rechtstreeks op '+esc(saved.contactPhone)+'">'+icon('phone')+' '+esc(saved.contactPhone)+'</a>':'<span class="muted" title="'+(e.reason==='cooldown'?'Belwachttijd tot '+esc(fmt(e.until)):'Bellen is momenteel niet beschikbaar')+'">'+esc(saved.contactPhone)+' · tijdelijk niet belbaar</span>'):'');
+}
+function workbookContactPersonHTML(l,w){
+ const required=!!(String(w.contactEmail||'').trim()||String(w.contactPhone||'').trim());
+ return '<fieldset class="workbook-contact-person"><legend>Contactpersoon</legend><label class="field"><span>Naam contactpersoon</span><input type="text" data-work="contactName" data-id="'+esc(l.id)+'" value="'+esc(w.contactName)+'" maxlength="120" autocomplete="off" '+(required?'required':'')+'></label><label class="field"><span>E-mailadres (optioneel)</span><input type="email" data-work="contactEmail" data-id="'+esc(l.id)+'" value="'+esc(w.contactEmail)+'" maxlength="254" autocomplete="off" inputmode="email"></label><label class="field"><span>Rechtstreeks telefoonnummer (optioneel)</span><input type="tel" data-work="contactPhone" data-id="'+esc(l.id)+'" value="'+esc(w.contactPhone)+'" maxlength="60" autocomplete="off" inputmode="tel"></label><div class="workbook-contact-person-links" data-contact-person-links>'+contactPersonLinksHTML(l,w)+'</div></fieldset>';
+}
+function updateLeadContactUI(){
+ const root=$('.workbook-contact-person');if(!state||!ui.drawer||!root||!leadDraft||leadDraft.leadId!==ui.drawer)return;
+ const values={...leadDraft.base,...leadDraft.changes},name=root.querySelector('[data-work="contactName"]');
+ if(name)name.required=!!(String(values.contactEmail||'').trim()||String(values.contactPhone||'').trim());
+ const lead=state.leads.find(l=>l.id===ui.drawer),links=root.querySelector('[data-contact-person-links]');if(lead&&links){const html=contactPersonLinksHTML(lead,values);if(links.innerHTML!==html)links.innerHTML=html;}
+}
 function workbookFollowupHTML(l,w){
  const draft=getLeadDraft(l.id,w);for(const [field,value]of Object.entries(leadValues(w)))if(!Object.hasOwn(draft.changes,field))draft.base[field]=value;w={...w,...draft.changes};
  const members=activeUsers(),historic=w.ownerId&&!members.some(u=>u.id===w.ownerId);
@@ -616,6 +641,7 @@ function workbookFollowupHTML(l,w){
    <label class="field"><span>Prioriteit</span><select data-work="priority" data-id="${esc(l.id)}">${Object.entries(priorityNames).map(([v,n])=>`<option value="${v}" ${w.priority===v?'selected':''}>${n}</option>`).join('')}</select></label>
    <label class="field full"><span>Verantwoordelijke verkoper</span><select data-work="ownerId" data-id="${esc(l.id)}"><option value="">Niet toegewezen</option>${historic?`<option value="${esc(w.ownerId)}" selected>${esc(userName(w.ownerId))} (historisch)</option>`:''}${members.map(u=>`<option value="${esc(u.id)}" ${w.ownerId===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select></label>
   </div>
+  ${workbookContactPersonHTML(l,w)}
   <div class="workbook-next">
    <div class="section-heading"><h4>Volgende actie</h4>${btn('Terugbellen plannen','callback','ghost small',`data-id="${esc(l.id)}"`)}</div>
    ${w.callbacks.filter(c=>!c.done).sort((a,b)=>Date.parse(a.dueAt)-Date.parse(b.dueAt)).map(c=>callbackCard({...c,lead:l},true)).join('')||'<p class="muted">Geen terugbelafspraak gepland.</p>'}
@@ -782,7 +808,7 @@ document.addEventListener('click',async e=>{
    case'go-settings':navTo('settings');break;
    case'complete-callback':await mutate('callback.complete',{leadId:target.dataset.leadId,callbackId:id});render();toast('Terugbelafspraak afgehandeld.');break;
    case'register-call':case'call-link':{
-    const lead=state.leads.find(l=>l.id===id),phone=target.getAttribute('href'),numbers=lead?[lead,...(Array.isArray(lead.projectDetails?.parties)?lead.projectDetails.parties:[])].map(leadPhone).filter(Boolean):[];
+    const lead=state.leads.find(l=>l.id===id),phone=target.getAttribute('href'),numbers=lead?[lead,{phone:contactPhoneNumber(work(lead))},...(Array.isArray(lead.projectDetails?.parties)?lead.projectDetails.parties:[])].map(leadPhone).filter(Boolean):[];
     if(!numbers.length||a==='call-link'&&!numbers.some(number=>phone==='tel:'+number))throw Error('Er is geen geldig telefoonnummer beschikbaar voor deze lead.');
     if(target.getAttribute('aria-busy')==='true')return;target.setAttribute('aria-busy','true');await mutate('call.record',{leadId:id});render();toast('Belmoment geregistreerd.');if(a==='call-link')location.href=phone;break;
    }
@@ -832,7 +858,7 @@ function updateLeadSearch(e){
  ui.query=input.value;clearTimeout(searchTimer);if(e.isComposing)return;
  searchTimer=setTimeout(()=>{if(input.isConnected&&input===$('#lead-search')&&!ui.modal&&!ui.drawer)renderLeadSearchResults();},180);
 }
-document.addEventListener('input',e=>{updateLeadSearch(e);if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
+document.addEventListener('input',e=>{updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&leadContactFields.includes(e.target.dataset.work)&&e.target.closest('.workbook-drawer')?.dataset.drawerId===ui.drawer&&!leadDraft?.saving){const draft=getLeadDraft();draftLeadField(draft,e.target.dataset.work,e.target.value);draft.error='';updateLeadSaveUI();}if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
 document.addEventListener('compositionend',updateLeadSearch);
 document.addEventListener('submit',async e=>{
  e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));

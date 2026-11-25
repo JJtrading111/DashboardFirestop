@@ -27,6 +27,7 @@ export function getWorkspace(state, companyId, leadId) {
   state.workspaces[companyId][leadId] ??= {
     status: company.columns[0]?.id ?? 'nieuw', priority: 'medium', ownerId: null,
     commitment: false, calculation: false, commitmentAt: null, calculationAt: null,
+    contactName: '', contactEmail: '', contactPhone: '',
     notes: [], callbacks: [], calls: []
   };
   return state.workspaces[companyId][leadId];

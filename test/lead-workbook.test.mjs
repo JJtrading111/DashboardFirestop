@@ -181,4 +181,52 @@ test('shared lead opening renders the workbook and both flags directly below the
  effects.length=0;attributes.delete('aria-busy');context.recordEffect=()=>{throw Error('Belwachttijd');};
  await listeners.get('click')({target,preventDefault(){}});
  assert.deepEqual(effects,[],'A failed call registration must not open a dialer and bypass the lead cooldown');
+
+ // Direct contact details belong to the selected company. Optional domestic
+ // trunk notation stays readable while the dialer receives the actual number.
+ const directContact={contactName:'Noor Visser',contactEmail:'noor+project#1@example.test',contactPhone:'+31 (0)6 1234 5678'};
+ context.directContact=directContact;
+ vm.runInContext("Object.assign(work(partyOnlyLead),directContact);",context);
+ const direct=vm.runInContext("contactPersonLinksHTML(partyOnlyLead,work(partyOnlyLead))",context);
+ assert.match(direct,/href="tel:\+31612345678"[^>]*data-action="call-link"/);
+ assert.ok(direct.includes(directContact.contactPhone),'Stored display notation is preserved');
+ assert.match(direct,/href="mailto:noor%2Bproject%231@example\.test"/,'Special recipient characters cannot become mail headers or fragments');
+ vm.runInContext("Object.assign(work(partyOnlyLead),{contactPhone:'0031 (0)6 1234 5678'});",context);
+ assert.match(vm.runInContext("contactPersonLinksHTML(partyOnlyLead,work(partyOnlyLead))",context),/href="tel:0031612345678"/);
+ vm.runInContext("Object.assign(work(partyOnlyLead),directContact);",context);
+
+ // Unsaved edits cannot expose a new dial link or replace the saved recipient.
+ const edited=vm.runInContext("contactPersonLinksHTML(partyOnlyLead,{...work(partyOnlyLead),contactPhone:'06-87654321'})",context);
+ assert.doesNotMatch(edited,/href="(?:tel|mailto):/);assert.match(edited,/Beschikbaar na opslaan/);
+ const contactBlocked=vm.runInContext("state.settings.cooldownHours=48;state.callLog=[{leadId:partyOnlyLead.id,companyId:'other-company',at:new Date().toISOString()}];contactPersonLinksHTML(partyOnlyLead,work(partyOnlyLead));",context);
+ assert.doesNotMatch(contactBlocked,/href="tel:/);assert.match(contactBlocked,/tijdelijk niet belbaar/);
+ const contactCallback=vm.runInContext("work(partyOnlyLead).callbacks.push({done:false,assigneeId:'seller',dueAt:new Date(Date.now()-1000).toISOString()});contactPersonLinksHTML(partyOnlyLead,work(partyOnlyLead));",context);
+ assert.match(contactCallback,/href="tel:\+31612345678"/,'An own due callback still permits the saved direct contact number');
+ vm.runInContext("state.callLog=[];work(partyOnlyLead).callbacks=[];",context);
+
+ let acknowledge;
+ context.awaitRegistration=()=>new Promise(resolve=>{acknowledge=resolve;});
+ context.recordEffect=(...args)=>effects.push(args);
+ vm.runInContext("mutate=async(type,payload)=>{recordEffect(type,payload.leadId);await awaitRegistration();};",context);
+ attributes.set('href','tel:+31612345678');attributes.delete('aria-busy');
+ const pendingDirect= listeners.get('click')({target,preventDefault(){}});
+ assert.deepEqual(effects,[['call.record',lead.id]],'The direct number must wait for its own successful registration');
+ acknowledge();await pendingDirect;
+ assert.deepEqual(effects,[['call.record',lead.id],['dial','tel:+31612345678']]);
+
+ effects.length=0;attributes.delete('aria-busy');
+ vm.runInContext("mutate=async()=>{throw Error('Belwachttijd');};",context);
+ await listeners.get('click')({target,preventDefault(){}});
+ assert.deepEqual(effects,[],'A rejected direct contact call never opens the dialer');
+
+ vm.runInContext("state.workspaces['other-company']={[partyOnlyLead.id]:{contactName:'Ander bedrijf',contactPhone:'020-1112233'}};mutate=async(type,payload)=>{recordEffect(type,payload.leadId);};",context);
+ for(const href of ['tel:0201112233','tel:0687654321','tel:+310612345678']){
+  effects.length=0;attributes.delete('aria-busy');attributes.set('href',href);
+  await listeners.get('click')({target,preventDefault(){}});
+  assert.deepEqual(effects,[],'Foreign, unsaved or incorrectly normalized contact numbers are not known dial targets: '+href);
+ }
+ vm.runInContext("work(partyOnlyLead).contactPhone='06-55555555';",context);
+ effects.length=0;attributes.delete('aria-busy');attributes.set('href','tel:+31612345678');
+ await listeners.get('click')({target,preventDefault(){}});
+ assert.deepEqual(effects,[],'A stale contact link cannot dial a number changed by a colleague');
 });

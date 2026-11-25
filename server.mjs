@@ -26,6 +26,23 @@ const isLeadSource=source=>!!source&&!source.deleted&&source.id!=='outlook'&&(!s
 const sourceProvider=source=>['generic','bouwberichten'].includes(source?.provider)?source.provider:source?.id==='bouw'?'bouwberichten':'generic';
 const canonicalJson=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const importText=(value,label,max)=>value===undefined||value===null?'':text(value,label,max,0);
+const workspaceContactFields=['contactName','contactEmail','contactPhone'];
+function normalizeWorkspaceContact(value){
+ const fields={contactName:['Naam contactpersoon',120],contactEmail:['E-mailadres contactpersoon',254],contactPhone:['Rechtstreeks telefoonnummer',60]};
+ const contact={};
+ for(const [field,[label,max]]of Object.entries(fields)){
+  const raw=value[field]??'';
+  if(typeof raw!=='string'||/[\u0000-\u001f\u007f-\u009f]/.test(raw))fail(400,`${label}: gebruik een geldige waarde zonder regeleinden of besturingstekens.`);
+  contact[field]=text(raw,label,max,0);
+ }
+ if(contact.contactEmail){
+  if(!/^[A-Za-z0-9.!#$%&'*+/=^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(contact.contactEmail))fail(400,'Vul een geldig e-mailadres van de contactpersoon in.');
+  contact.contactEmail=contact.contactEmail.toLowerCase();
+ }
+ if(contact.contactPhone&&(!/^\+?[\d ()\-./]+$/.test(contact.contactPhone)||!/^\d{6,15}$/.test(contact.contactPhone.replace(/\D/g,''))))fail(400,'Vul een geldig rechtstreeks telefoonnummer in (6 tot 15 cijfers).');
+ if(!contact.contactName&&(contact.contactEmail||contact.contactPhone))fail(400,'Vul ook de naam van de contactpersoon in.');
+ return contact;
+}
 function projectWebsite(value){
  const address=importText(value,'Project- of organisatiesite',2000);if(!address)return'';
  try{const url=new URL(address);if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.href.length>2000)throw Error();return url.href;}catch{fail(400,'Gebruik een geldige http(s)-website.');}
@@ -362,7 +379,7 @@ export function createApp(options={}){
    case'workspace.save':{
     const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),changes=p.changes;
     const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype;
-    if(!plain(changes)||Object.keys(changes).some(field=>!['status','priority','ownerId','commitment','calculation'].includes(field)))fail(400,'Geef geldige opvolgvelden op.');
+    if(!plain(changes)||Object.keys(changes).some(field=>!['status','priority','ownerId','commitment','calculation',...workspaceContactFields].includes(field)))fail(400,'Geef geldige opvolgvelden op.');
     const values={...changes};
     for(const [field,value]of Object.entries(values)){
      if(field==='status'&&!company.columns.some(c=>c.id===value))fail(400,'Kies een geldige Kanban-status.');
@@ -372,6 +389,10 @@ export function createApp(options={}){
       values.ownerId=value||null;if(values.ownerId&&values.ownerId!==w.ownerId)requireMember(s,values.ownerId,cid);
      }
      if(['commitment','calculation'].includes(field)&&typeof value!=='boolean')fail(400,'Gebruik een geldig vinkje.');
+    }
+    if(workspaceContactFields.some(field=>Object.hasOwn(values,field))){
+     if(workspaceContactFields.some(field=>Object.hasOwn(values,field)&&typeof values[field]!=='string'))fail(400,'Geef geldige contactgegevens op.');
+     Object.assign(values,normalizeWorkspaceContact({...w,...values}));
     }
     let note,noteAdded=false;
     if(p.note!==undefined){
