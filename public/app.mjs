@@ -11,7 +11,7 @@ const priorityNames={high:'Hoog',medium:'Normaal',low:'Laag'};
 const routes=[['dashboard','Overzicht','grid'],['leads','Alle leads','layers'],['kanban','Kanban','board'],['calls','Bellijst','phone'],['callbacks','Terugbelafspraken','calendar'],['feed','Nieuwsfeed','activity'],['reports','Rapportages','chart'],['sources','Bronnen & koppelingen','link'],['logbook','Logboek','activity'],['team','Bedrijven & gebruikers','users'],['settings','Instellingen','settings']];
 const icons={grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',layers:'m12 3 9 5-9 5-9-5 9-5 M3 12l9 5 9-5 M3 16l9 5 9-5',board:'M3 4h18v16H3z M9 4v16 M15 4v16 M5.5 8h1 M11.5 8h1 M17.5 8h1',phone:'M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L9 11a16 16 0 0 0 4 4l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z',calendar:'M4 5h16v16H4z M16 3v4 M8 3v4 M4 11h16 M8 15h2 M14 15h2',activity:'M3 12h4l3-8 4 16 3-8h4',chart:'M4 3v17h17 M8 15v-4 M13 15V7 M18 15V4',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',search:'M21 21l-5-5 M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14',plus:'M12 5v14 M5 12h14',bell:'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4',chevron:'m9 5 7 7-7 7',close:'m6 6 12 12 M6 18 18 6',mail:'M3 5h18v14H3z m0 0 9 7 9-7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',check:'m5 12 4 4L19 6',building:'M4 21V3h11v18 M15 10h5v11 M7 7h4 M7 11h4 M7 15h4 M2 21h20',download:'M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5',edit:'m15 4 5 5 M4 20l4-1L21 6l-4-4L4 15z',menu:'M3 6h18 M3 12h18 M3 18h18',shield:'m12 3 9 4v5c0 5-9 9-9 9s-9-4-9-9V7z m-4 9 3 3 5-6',spark:'m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z'};
 const icon=(name)=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.layers}"/></svg>`;
-let state=null,session=null,authError='',authBusy=false,authRemember=false,activation=null,activationToken=null,activationInvalid=false;
+let state=null,session=null,authError='',authBusy=false,authRemember=false,activation=null,activationToken=null,activationInvalid=false,loggingOut=false,authGeneration=0;
 const initialFragment=new URLSearchParams(location.hash.slice(1));
 if(initialFragment.has('activate')){activationToken=initialFragment.get('activate');initialFragment.delete('activate');history.replaceState(null,'',location.pathname+location.search);}
 let pref;try{pref=JSON.parse(localStorage.getItem(PREF));}catch{}pref||={};
@@ -65,35 +65,35 @@ async function prepareCompanyLogo(file){
 const statusName=id=>company().columns.find(c=>c.id===id)?.name||'Nieuw';
 function save(){try{localStorage.setItem(PREF,JSON.stringify({companyId:ui.companyId,dismissed:ui.dismissed}));}catch{}}
 let mutationQueue=Promise.resolve(),pendingMutations=0,refreshVersion=0,lastSync=null;
-async function api(path,{method='GET',body,publicRequest=false}={}){
- const requestSession=session;
+async function api(path,{method='GET',body,publicRequest=false,csrfToken=session?.csrfToken,signal}={}){
+ const requestSession=session,requestGeneration=authGeneration;
  const headers={Accept:'application/json'};
  if(body!==undefined)headers['Content-Type']='application/json';
- if(session?.csrfToken&&method!=='GET')headers['X-CSRF-Token']=session.csrfToken;
- let response;try{response=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store'});}catch{throw Error('Geen verbinding met de server. Probeer het opnieuw.');}
+ if(csrfToken&&method!=='GET')headers['X-CSRF-Token']=csrfToken;
+ let response;try{response=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store',...(signal?{signal}:{})});}catch{throw Error('Geen verbinding met de server. Probeer het opnieuw.');}
  const result=await response.json().catch(()=>({error:'De server gaf geen geldig antwoord.'}));
- if(!response.ok){if(response.status===401&&!publicRequest&&session===requestSession){session=null;state=null;refreshVersion++;ui.modal=null;ui.drawer=null;authError='Je sessie is verlopen. Log opnieuw in.';renderAuth();}throw Error(result.error||'De actie kon niet worden uitgevoerd.');}
+ if(!response.ok){if(response.status===401&&!publicRequest&&!loggingOut&&requestGeneration===authGeneration&&session===requestSession){session=null;state=null;refreshVersion++;ui.modal=null;ui.drawer=null;authError='Je sessie is verlopen. Log opnieuw in.';renderAuth();}throw Error(result.error||'De actie kon niet worden uitgevoerd.');}
  return result;
 }
 function applyServer(result){if(!session?.authenticated)throw Error('Je sessie is verlopen. Log opnieuw in.');state=result.state;ui.userId=result.userId;ui.companyId=result.companyId;lastSync=new Date();save();}
 async function refreshState(companyId=ui.companyId,{renderPage=true,force=false,preserveEditing=false}={}){
- if(!session?.authenticated||(!force&&pendingMutations))return;
+ if(loggingOut||!session?.authenticated||(!force&&pendingMutations))return;
  const version=++refreshVersion;
  const result=await api('/api/state'+(companyId?'?companyId='+encodeURIComponent(companyId):''));
- if(version!==refreshVersion||!session?.authenticated)return;
+ if(loggingOut||version!==refreshVersion||!session?.authenticated)return;
  applyServer(result);
  const editing=ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea');
  if(renderPage&&!(preserveEditing&&editing))render();else{if(preserveEditing&&ui.modal?.type==='source-scraper')renderOverlay();renderToasts();}
  return result;
 }
 function mutate(type,payload={},targetCompany=ui.companyId){
- const actorSession=session;
+ const actorSession=session,generation=authGeneration;
  pendingMutations++;
  refreshVersion++;
  const job=mutationQueue.then(async()=>{
-  if(!actorSession?.authenticated||session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
+  if(loggingOut||generation!==authGeneration||!actorSession?.authenticated||session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
   const result=await api('/api/action',{method:'POST',body:{type,companyId:targetCompany,payload}});
-  if(session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
+  if(loggingOut||generation!==authGeneration||session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
   applyServer(result);
   return result;
  });
@@ -146,6 +146,33 @@ function authMarkup(){
  return intro+content+'<div class="auth-bottom">'+icon('shield')+' Alleen toegang na een uitnodiging.</div></section></main>';
 }
 function renderAuth(){clearSourceLogbook();document.body.classList.remove('overlay-open');$('#overlay-root').innerHTML='';$('#toast-root').innerHTML='';$('#app').innerHTML=authMarkup();}
+function updateLogoutUI(){
+ const root=$('.modal');if(!root||ui.modal?.type!=='account')return;
+ const button=root.querySelector('[data-action="logout"]'),close=root.querySelectorAll('[data-action="close-modal"]'),error=root.querySelector('[data-logout-error]');
+ if(button){button.disabled=loggingOut;button.textContent=loggingOut?'Uitloggen…':'Uitloggen';button.setAttribute('aria-busy',String(loggingOut));}
+ close.forEach(button=>{button.disabled=loggingOut;});
+ if(error){error.textContent=ui.modal.logoutError||'';error.hidden=!ui.modal.logoutError;}
+}
+async function logout(){
+ if(loggingOut)return;
+ loggingOut=true;authGeneration++;refreshVersion++;if(ui.modal?.type==='account')ui.modal.logoutError='';updateLogoutUI();
+ try{
+  const signal=AbortSignal.timeout(15000);
+  // A different tab may have renewed the browser cookie since this page loaded.
+  const latest=await api('/api/session',{publicRequest:true,signal});
+  const result=await api('/api/auth/logout',{method:'POST',body:{},publicRequest:true,csrfToken:latest.authenticated?latest.csrfToken:null,signal});
+  if(result.authenticated!==false)throw Error('Uitloggen is niet bevestigd. Probeer het opnieuw.');
+  session=null;state=null;refreshVersion++;authGeneration++;activation=null;activationToken=null;activationInvalid=false;authError='';authBusy=false;authRemember=false;
+  ui.route='dashboard';ui.userId=null;ui.companyId=null;ui.drawer=null;ui.modal=null;ui.mobile=false;ui.dismissed=[];resetFilters();
+  transient=[];leadDraft=null;leadReturn=null;lastFocus=null;lastSync=null;clearSourceLogbook();
+  try{localStorage.removeItem(PREF);}catch{}
+  renderAuth();location.replace('/');
+ }catch(error){
+  loggingOut=false;
+  if(ui.modal?.type==='account'){ui.modal.logoutError=error.message||'Uitloggen is niet gelukt. Probeer het opnieuw.';updateLogoutUI();}
+  else if(state)toast(error.message||'Uitloggen is niet gelukt. Probeer het opnieuw.','amber');
+ }
+}
 async function initialize(){
  $('#app').innerHTML='<div class="app-loading" role="status">Bouwberichten Dashboard laden…</div>';
  try{
@@ -170,7 +197,7 @@ async function authenticate(form,data){
   else renderAuth();
  }finally{delete data.password;delete data.passwordConfirm;}
 }
-function toast(text,tone='green'){const id=uid('toast');transient.push({id,text,tone});renderToasts();setTimeout(()=>{transient=transient.filter(t=>t.id!==id);renderToasts();},6500);}
+function toast(text,tone='green'){if(loggingOut)return;const id=uid('toast');transient.push({id,text,tone});renderToasts();setTimeout(()=>{transient=transient.filter(t=>t.id!==id);renderToasts();},6500);}
 function callbacks(){return state.leads.flatMap(l=>work(l).callbacks.map(cb=>({...cb,lead:l}))).filter(c=>!c.done).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));}
 function eligible(l){return callEligibility(state,l.id,company().id,currentUser().id);}
 const projectDateColumns={scheduleStart:'Start bouw',scheduleEnd:'Oplevering'};
@@ -415,6 +442,7 @@ function heading(title,subtitle,actions=''){return `<div class="page-heading"><d
 function empty(message='Geen leads gevonden.',action=''){return `<div class="empty-state">${icon('layers')}<h3>${message}</h3><p>Pas je filters aan of voeg een nieuwe lead toe.</p>${action}</div>`;}
 function resetFilters(){Object.assign(ui,{query:'',source:'all',priority:'all',status:'all',owner:'all',availability:'all',constructionFrom:'',constructionTo:'',deliveryFrom:'',deliveryTo:''});}
 function render(){
+ if(loggingOut)return;
  if(!state||!session?.authenticated){renderAuth();return;}
  if(!isChief())ui.companyId=currentUser().companyId;if(!state.companies.some(c=>c.id===ui.companyId))ui.companyId=state.companies[0].id;
  const page=routes.find(r=>r[0]===ui.route)||routes[0],due=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()).length;
@@ -523,6 +551,7 @@ function changeCooldownUnit(select){
  $('#cooldown-amount-label').textContent='Aantal '+(next==='days'?'dagen':'uren');
 }
 function renderOverlay(){
+ if(loggingOut)return;
  const root=$('#overlay-root'),existing=root.querySelector('.modal');
  if(ui.modal?.type==='source-scraper'&&existing?.dataset.scraperSourceId===ui.modal.id){const source=leadSources().find(s=>s.id===ui.modal.id&&sourceProvider(s)==='bouwberichten');if(source&&isChief()){updateScraperModal(existing,source,ui.modal);return;}}
  const oldBody=root.querySelector('.detail-body');if(oldBody&&oldBody.closest('[data-drawer-id]')?.dataset.drawerId===ui.drawer)drawerScroll=oldBody.scrollTop;
@@ -713,7 +742,7 @@ case'delete-source':{const s=activeSources().find(s=>s.id===m.id);return s?modal
 case'delete-invite':{const invitation=state.invitations.find(i=>i.id===m.id);return invitation?modalShell('Uitnodigingslink verwijderen?','<p>Verwijder de uitnodiging voor <strong>'+esc(invitation.name)+'</strong> ('+esc(invitation.email)+') uit de lijst.</p><p>De link werkt daarna niet meer. Een bestaand gebruikersaccount en de bijbehorende geschiedenis blijven behouden.</p>',btn('Annuleren','close-modal')+btn('Verwijderen','confirm-delete-invite','danger','data-id="'+esc(invitation.id)+'"')):modalShell('Uitnodiging niet gevonden','<p>Deze uitnodiging is al verwijderd. Sluit dit venster om verder te gaan.</p>',btn('Sluiten','close-modal'));}
 case'edit-company':{const c=state.companies.find(item=>item.id===m.id);return c?companyEditorHTML(c):modalShell('Bedrijf niet gevonden','<p>Sluit dit venster en vernieuw de pagina.</p>',btn('Sluiten','close-modal'));}
 case'demo-info':return modalShell('Je gedeelde werkplek','<p>Accounts, uitnodigingslinks, notities, Kanban, belregistraties en terugbelafspraken werken met gedeelde opslag op de server.</p><div class="info-box"><strong>Bronnen en gegevens</strong><p>Zelf toegevoegde leads en jullie opvolging worden gedeeld opgeslagen. Een importtoken staat klaar voor je connector; pas na een geslaagde aanlevering zijn leads geïmporteerd. Outlook is nog niet aangesloten.</p></div><p>Uitnodigingslinks geven echte toegang aan de bedoelde gebruiker. Deel ze zelf; het dashboard verstuurt geen e-mails. Meldingen verschijnen wanneer het dashboard geopend is.</p>',btn('Begrepen','close-modal','primary'));
-case'account':return modalShell('Mijn account','<div class="account-summary"><span class="avatar">'+esc(currentUser().name.split(' ').map(s=>s[0]).slice(0,2).join(''))+'</span><div><strong>'+esc(currentUser().name)+'</strong><p>'+esc(currentUser().email)+'</p></div></div><dl class="project-facts"><dt>Bedrijf</dt><dd>'+esc(accountCompanyName(currentUser()))+'</dd><dt>Rol</dt><dd>'+esc(currentUser().role)+'</dd></dl><p class="muted">'+(isChief()?'Je hebt toegang tot alle bedrijven. Kies bovenaan welke werkplek je wilt openen.':'Je toegang hoort bij één bedrijf. De hoofdbeheerder kan je koppeling aanpassen.')+'</p>',btn('Sluiten','close-modal')+btn('Uitloggen','logout','primary'));
+case'account':return modalShell('Mijn account','<div class="account-summary"><span class="avatar">'+esc(currentUser().name.split(' ').map(s=>s[0]).slice(0,2).join(''))+'</span><div><strong>'+esc(currentUser().name)+'</strong><p>'+esc(currentUser().email)+'</p></div></div><dl class="project-facts"><dt>Bedrijf</dt><dd>'+esc(accountCompanyName(currentUser()))+'</dd><dt>Rol</dt><dd>'+esc(currentUser().role)+'</dd></dl><p class="muted">'+(isChief()?'Je hebt toegang tot alle bedrijven. Kies bovenaan welke werkplek je wilt openen.':'Je toegang hoort bij één bedrijf. De hoofdbeheerder kan je koppeling aanpassen.')+'</p><p class="auth-error" data-logout-error role="alert" '+(m.logoutError?'':'hidden')+'>'+esc(m.logoutError||'')+'</p>',btn('Sluiten','close-modal')+btn('Uitloggen','logout','primary'));
 case'invite-link':return modalShell('Je uitnodigingslink is klaar','<p>Deel deze persoonlijke link met <strong>'+esc(m.invitation?.name||m.invitation?.email||'de ontvanger')+'</strong>. De link werkt één keer en vervalt na zeven dagen.</p><label class="field"><span>Persoonlijke uitnodigingslink</span><input id="invite-link" type="text" readonly value="'+esc(m.inviteUrl)+'" autocomplete="off"></label><p class="muted help-text">De volledige link wordt alleen nu getoond. Later kun je een nieuwe link maken; de vorige werkt dan niet meer.</p><div class="info-box"><strong>Geen e-mail verzonden</strong><p>Kopieer de link en stuur hem zelf naar het ingevulde e-mailadres.</p></div>',btn(icon('link')+' Link kopiëren','copy-invite','primary')+btn('Gereed','close-modal'));
 
 case'new-lead':if(!leadSources().length)return modalShell('Voeg eerst een bron toe','<p>Voeg een bron toe voordat je een nieuwe lead maakt. De hoofdbeheerder beheert de bronnen.</p>',isChief()?btn('Bron toevoegen','new-source','primary'):btn('Sluiten','close-modal'));return modalShell('Een nieuwe kans toevoegen',`<form id="lead-form"><div class="form-grid"><label class="field full"><span>Projectnaam</span><input name="title" required maxlength="150" placeholder="Bijv. Renovatie Stationskwartier"></label><label class="field"><span>Organisatie</span><input name="organization" required maxlength="120"></label><label class="field"><span>Plaats</span><input name="city" required maxlength="100"></label><label class="field"><span>Broncategorie</span><select name="source">${leadSources().map(source=>source.id).map(s=>`<option value="${s}">${esc(sourceName(s))}</option>`).join('')}</select></label><label class="field"><span>Contactpersoon</span><input name="contact" required maxlength="100"></label><label class="field"><span>Telefoon</span><input name="phone" type="tel" required maxlength="30" pattern="[+0-9 ()-]{6,30}"></label><label class="field"><span>E-mailadres</span><input name="email" type="email" required maxlength="160"></label><label class="field full"><span>Projectomschrijving</span><textarea name="description" required maxlength="3000" rows="3"></textarea></label></div><p class="muted">De lead wordt centraal zichtbaar voor alle bedrijven. Opvolging blijft per bedrijf.</p>${formButtons('Lead toevoegen')}</form>`, '',true);
@@ -764,12 +793,12 @@ case'source-import-revoke':{const s=leadSources().find(s=>s.id===m.id);return s&
 case'source-config':{const s=activeSources().find(s=>s.id===m.id);if(!s)return modalShell('Bron niet gevonden','<p>Deze bron is verwijderd. Sluit dit venster en vernieuw het overzicht.</p>',btn('Sluiten','close-modal'));if(s.id==='outlook')return modalShell('Outlook: het koppelplan','<p>De toekomstige Outlook-connector matcht e-mails met leads via het e-mailadres van het contact, de organisatie en een projectkenmerk.</p><ol><li>De gebruiker geeft zelf toestemming via Microsoft OAuth.</li><li>De connector zoekt binnen de toegestane mailbox en bewaart geheimen op de server.</li><li>Voorgestelde matches worden zichtbaar ter controle; twijfelgevallen vragen een handmatige keuze.</li><li>E-mails en matches blijven bij het eigen bedrijf.</li></ol><span class="badge amber">Nog niet aangesloten · geen toegang tot je mailbox</span>',btn('Begrepen','close-modal','primary'));return sourceEditorHTML(s);}
 
 default:return '';}}
-function closeModal(){const scraper=ui.modal?.type==='source-scraper'||ui.modal?.type==='source-scraper-disconnect';ui.modal=null;if(scraper&&state)render();else renderOverlay();if(lastFocus?.isConnected)lastFocus.focus();else if(ui.drawer)$('#detail-title')?.focus({preventScroll:true});}
+function closeModal(){if(loggingOut)return;const scraper=ui.modal?.type==='source-scraper'||ui.modal?.type==='source-scraper-disconnect';ui.modal=null;if(scraper&&state)render();else renderOverlay();if(lastFocus?.isConnected)lastFocus.focus();else if(ui.drawer)$('#detail-title')?.focus({preventScroll:true});}
 function openModal(type,id=null,extra={}){captureLeadDraft();lastFocus=document.activeElement;const draft=type==='edit-company'?{logoDraft:companyLogoSource(state.companies.find(c=>c.id===id)),logoDirty:false,logoBusy:false,logoError:''}:{};ui.modal={type,id,...draft,...extra};renderOverlay();}
 function renderToasts(){if(!$('#toast-root')||!state)return;const due=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()&&!ui.dismissed.includes(currentUser().id+':'+c.id)).slice(0,2);$('#toast-root').innerHTML=[...transient.map(t=>`<div class="toast ${t.tone}"><span class="toast-icon">${icon(t.tone==='amber'?'clock':'check')}</span><div><strong>${t.tone==='amber'?'Let op':'Opgeslagen'}</strong><p>${esc(t.text)}</p></div><button class="toast-close" data-action="dismiss-toast" data-id="${t.id}" aria-label="Melding sluiten">${icon('close')}</button></div>`),...due.map(c=>`<div class="toast callback-toast"><span class="toast-icon">${icon('bell')}</span><div><strong>Terugbelmoment voor ${esc(userName(c.assigneeId).split(' ')[0])}</strong><button class="text-link" data-action="open-lead" data-id="${c.lead.id}">${esc(c.lead.title)}</button><p>${fmt(c.dueAt)} · Gemaakt door ${esc(c.creatorName)}</p></div><button class="toast-close" data-action="dismiss-callback" data-id="${c.id}" aria-label="Terugbelmelding sluiten">${icon('close')}</button></div>`)].join('');}
 
 document.addEventListener('click',async e=>{
- const target=e.target.closest('[data-action],[data-route]');if(!target||target.disabled)return;
+ const target=e.target.closest('[data-action],[data-route]');if(!target||target.disabled||loggingOut)return;
  const a=target.dataset.action,id=target.dataset.id;if(target.matches('.kanban-card')&&Date.now()<suppressCardClickUntil){e.preventDefault();return;}
  if(leadDraft?.saving&&(target.closest('.workbook-drawer')||a==='open-lead'||a==='close-drawer'||target.dataset.route)){e.preventDefault();return;}
  if(target.dataset.route){e.preventDefault();if(!state)return;if(['leads','calls','kanban'].includes(target.dataset.route))resetFilters();navTo(target.dataset.route);return;}
@@ -850,15 +879,15 @@ document.addEventListener('click',async e=>{
     const field=$('#invite-link');field?.focus();field?.select();
     try{await navigator.clipboard.writeText(ui.modal.inviteUrl);toast('Uitnodigingslink gekopieerd. Deel hem met de ontvanger.');}catch{toast('Selecteer de link en kopieer hem met Ctrl+C.','amber');}break;
    }
-   case'logout':await mutationQueue;refreshVersion++;await api('/api/auth/logout',{method:'POST',body:{}});session=null;state=null;ui.modal=null;ui.drawer=null;authError='';authRemember=false;transient=[];renderAuth();break;
+   case'logout':await logout();break;
    case'export':exportLeads();break;
    case'export-report':exportReport();break;
    case'reset-report':Object.assign(ui,{reportCompany:'current',reportSeller:'all',reportSource:'all',reportFrom:'',reportTo:''});render();break;
   }
- }catch(error){if(target.isConnected){target.disabled=false;target.removeAttribute('aria-busy');}if(state)toast(error.message||'De actie is niet gelukt.','amber');else{authError=error.message;renderAuth();}}
+ }catch(error){if(loggingOut)return;if(target.isConnected){target.disabled=false;target.removeAttribute('aria-busy');}if(state)toast(error.message||'De actie is niet gelukt.','amber');else{authError=error.message;renderAuth();}}
 });
 document.addEventListener('change',async e=>{
- const el=e.target;const activationForm=el.closest('#activation-form');if(activationForm){updateActivationPasswordFeedback(activationForm,{editedField:el.name});return;}if(!state)return;
+ if(loggingOut)return;const el=e.target;const activationForm=el.closest('#activation-form');if(activationForm){updateActivationPasswordFeedback(activationForm,{editedField:el.name});return;}if(!state)return;
  if(el.dataset.field==='query')return;
  if(el.hasAttribute('data-logbook-filter')){if(!isChief())return;const key=el.dataset.logbookFilter;if(['status','source'].includes(key)){sourceLogbook[key]=el.value;sourceLogbook.entries=[];sourceLogbook.total=0;sourceLogbook.hasMore=false;await refreshSourceLogbook();}return;}
  if(el.hasAttribute('data-account-role')){updateAccountCompanyField(el);return;}
@@ -886,7 +915,7 @@ function updateLeadSearch(e){
  ui.query=input.value;clearTimeout(searchTimer);if(e.isComposing)return;
  searchTimer=setTimeout(()=>{if(input.isConnected&&input===$('#lead-search')&&!ui.modal&&!ui.drawer)renderLeadSearchResults();},180);
 }
-document.addEventListener('input',e=>{const activationForm=e.target.closest('#activation-form');if(activationForm)updateActivationPasswordFeedback(activationForm,{editedField:e.target.name});updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&leadContactFields.includes(e.target.dataset.work)&&e.target.closest('.workbook-drawer')?.dataset.drawerId===ui.drawer&&!leadDraft?.saving){const draft=getLeadDraft();draftLeadField(draft,e.target.dataset.work,e.target.value);draft.error='';updateLeadSaveUI();}if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
+document.addEventListener('input',e=>{if(loggingOut)return;const activationForm=e.target.closest('#activation-form');if(activationForm)updateActivationPasswordFeedback(activationForm,{editedField:e.target.name});updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&leadContactFields.includes(e.target.dataset.work)&&e.target.closest('.workbook-drawer')?.dataset.drawerId===ui.drawer&&!leadDraft?.saving){const draft=getLeadDraft();draftLeadField(draft,e.target.dataset.work,e.target.value);draft.error='';updateLeadSaveUI();}if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
 document.addEventListener('compositionend',updateLeadSearch);
 document.addEventListener('paste',e=>{
  const input=e.target,form=input.closest('#activation-form');if(!form||!['password','passwordConfirm'].includes(input.name)||!e.clipboardData||authBusy)return;
@@ -896,7 +925,7 @@ document.addEventListener('paste',e=>{
 });
 document.addEventListener('invalid',e=>{const form=e.target.closest('#activation-form');if(form)updateActivationPasswordFeedback(form,{submitted:true});},true);
 document.addEventListener('submit',async e=>{
- e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));
+ e.preventDefault();if(loggingOut)return;const form=e.target,data=Object.fromEntries(new FormData(form));
  if(form.getAttribute('id')==='login-form'||form.getAttribute('id')==='activation-form'){try{await authenticate(form,data);}catch(error){authError=error.message;renderAuth();}return;}
  if(!state)return;
  if(form.getAttribute('id')==='note-form'&&ui.drawer){await saveLeadDraft();return;}
@@ -930,11 +959,16 @@ function amsterdamToISO(value){const [date,time]=value.split('T'),[y,m,d]=date.s
 let dragged=null,suppressCardClickUntil=0;document.addEventListener('dragstart',e=>{const card=e.target.closest('[data-lead]');if(card){suppressCardClickUntil=Infinity;dragged=card.dataset.lead;e.dataTransfer.setData('text/plain',dragged);e.dataTransfer.effectAllowed='move';}});document.addEventListener('dragover',e=>{const col=e.target.closest('[data-column]');if(col&&dragged){e.preventDefault();col.dataset.dragOver='true';}});document.addEventListener('dragleave',e=>{const col=e.target.closest('[data-column]');if(col&&!col.contains(e.relatedTarget))delete col.dataset.dragOver;});document.addEventListener('drop',async e=>{const col=e.target.closest('[data-column]');if(!col||!dragged)return;e.preventDefault();const leadId=dragged;suppressCardClickUntil=Date.now()+250;dragged=null;try{await mutate('workspace.update',{leadId,field:'status',value:col.dataset.column});render();}catch(error){if(state){render();toast(error.message,'amber');}}});
 document.addEventListener('dragend',()=>{suppressCardClickUntil=Date.now()+250;dragged=null;document.querySelectorAll('[data-drag-over]').forEach(e=>delete e.dataset.dragOver);});
 document.addEventListener('keydown',e=>{const card=e.target.closest('.kanban-card[role=button]');if(card&&e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();card.click();return;}if(e.key==='Escape'){if(ui.modal)closeModal();else if(ui.drawer)closeLeadDrawer();}if(e.key==='Tab'&&(ui.modal||ui.drawer)){const root=$('.modal')||$('.detail-drawer'),items=[...root.querySelectorAll('a[href],button:not([disabled]),input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea')].filter(x=>x.offsetParent!==null),first=items[0],last=items.at(-1);if(!items.length){e.preventDefault();return;}if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
-window.addEventListener('hashchange',()=>{const r=location.hash.slice(1);if(routes.some(x=>x[0]===r)&&r!==ui.route){ui.route=r;ui.drawer=null;ui.modal=null;render();}});
+window.addEventListener('hashchange',()=>{if(loggingOut)return;const r=location.hash.slice(1);if(routes.some(x=>x[0]===r)&&r!==ui.route){ui.route=r;ui.drawer=null;ui.modal=null;render();}});
+window.addEventListener('pageshow',event=>{
+ if(!event.persisted)return;
+ loggingOut=false;authGeneration++;refreshVersion++;session=null;state=null;ui.modal=null;ui.drawer=null;leadDraft=null;leadReturn=null;transient=[];
+ renderAuth();void initialize();
+});
 
 function csv(name,rows){const cell=v=>{let value=String(v??'');if(/^[=+\-@\t\r]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"';};const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('Je export is klaargezet als CSV-bestand.');}
 function exportLeads(){csv(`bouwberichten-${ui.route==='calls'?'bellijst':'leads'}.csv`,[['Project','Organisatie','Plaats','Start bouw','Oplevering','Bron','Contact','Telefoon','E-mail','Status','Prioriteit','Verkoper','Toezegging','Klaar voor calculatie','Nu belbaar'],...filteredLeads().map(l=>{const w=work(l);return[l.title,l.organization,l.city,l.projectDetails?.scheduleStart||'',l.projectDetails?.scheduleEnd||'',leadSourceIds(l).map(sourceName).join(' · '),l.contact,l.phone,l.email,statusName(w.status),priorityNames[w.priority],userName(w.ownerId),w.commitment?'Ja':'Nee',w.calculation?'Ja':'Nee',eligible(l).allowed?'Ja':'Nee'];})]);}
 function exportReport(){const cid=isChief()?(ui.reportCompany==='current'?company().id:ui.reportCompany):company().id;const rows=reportRows(state,{companyId:cid,sellerId:ui.reportSeller,source:ui.reportSource,from:ui.reportFrom,to:ui.reportTo});csv('bouwberichten-conversierapport.csv',[['Bedrijf','Verkoper','Bron','Toegewezen leads','Gebeld','Toezeggingen','Calculaties','Conversie (%)'],...rows.map(r=>[r.companyName,r.sellerName,reportSourceLabel(r),r.total,r.contacted,r.commitments,r.calculations,Math.round(r.conversion)])]);}
 initialize();
 setInterval(refreshScraperModal,10000);
-setInterval(async()=>{if(!session?.authenticated||pendingMutations||document.hidden)return;try{const editing=!!(ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea'));await refreshState(ui.companyId,{renderPage:!editing,preserveEditing:true});if(ui.route==='logbook'&&isChief()&&!sourceLogbook.loading&&!sourceLogbook.busyJobId)await refreshSourceLogbook({quiet:true});}catch(error){if(state)toast(error.message,'amber');}},30000);
+setInterval(async()=>{if(loggingOut||!session?.authenticated||pendingMutations||document.hidden)return;try{const editing=!!(ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea'));await refreshState(ui.companyId,{renderPage:!editing,preserveEditing:true});if(ui.route==='logbook'&&isChief()&&!sourceLogbook.loading&&!sourceLogbook.busyJobId)await refreshSourceLogbook({quiet:true});}catch(error){if(state)toast(error.message,'amber');}},30000);
