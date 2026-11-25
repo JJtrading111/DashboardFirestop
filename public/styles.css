@@ -299,3 +299,16 @@
 .workbook-contact-person [data-contact-person-links] a svg{flex:0 0 auto;width:16px;height:16px}
 .workbook-contact-person .help-text{margin:0;font-size:13px;line-height:1.6;color:#526c87}
 @media(max-width:560px){.workbook-contact-person{padding:11px 12px}.workbook-contact-person input{min-height:44px}}
+
+#activation-password-requirements{min-width:0;padding:12px 14px;border:1px solid #dbe4ef;border-radius:8px;background:#f7faff;color:#405a77;font-size:14px;line-height:1.6}
+#activation-password-requirements>strong,#activation-password-requirements>h2,#activation-password-requirements>h3{display:block;margin:0 0 7px;font-size:14px;font-weight:650;line-height:1.5;color:#294865}
+#activation-password-requirements ul{display:grid;gap:7px;list-style:none;padding:0;margin:0}
+#activation-password-requirements [data-password-rule]{display:grid;grid-template-columns:18px minmax(0,1fr);gap:7px;min-width:0;color:#526b86;overflow-wrap:anywhere}
+#activation-password-requirements [data-password-rule]:before{content:'○';font-size:17px;font-weight:700;line-height:1.4;text-align:center;color:#647b96}
+#activation-password-requirements [data-state=valid]{color:#146b4f}
+#activation-password-requirements [data-state=valid]:before{content:'✓';color:#146b4f}
+#activation-password-requirements [data-state=invalid]{color:#983d32}
+#activation-password-requirements [data-state=invalid]:before{content:'×';color:#983d32}
+.auth-card [data-activation-password-error]{margin:0;padding:11px 13px;border:1px solid #ecc7c2;border-radius:8px;background:#fff1ef;color:#983d32;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
+.auth-card input[aria-invalid=true]{border-color:#b64f43;box-shadow:0 0 0 1px #b64f431f}
+@media(max-width:400px){#activation-password-requirements{padding:11px 12px}}

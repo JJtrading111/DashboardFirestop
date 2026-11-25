@@ -14,6 +14,8 @@ Op het inlogscherm kun je **Aangemeld blijven** aanvinken. De aanmelding blijft 
 
 Met **Tonen / Verbergen** kun je het wachtwoord zichtbaar maken en weer afschermen. Deze knoppen staan ook bij beide wachtwoordvelden tijdens accountactivatie. Het wachtwoord wordt hiervoor niet apart opgeslagen.
 
+Bij een uitnodigingslink staan onder de twee wachtwoordvelden de voorwaarden: **minimaal 12 en maximaal 256 tekens**, en **twee gelijke wachtwoorden**. Tijdens typen of plakken toont de lijst welke voorwaarden al kloppen. Ongeldige invoer krijgt een concrete melding en wordt niet verstuurd. Ook een lege naam wordt gemeld. Bij een geweigerde activatie blijven het formulier en de invoer beschikbaar voor correctie of opnieuw proberen; wachtwoorden worden niet in browseropslag bewaard. Er zijn geen verplichte combinaties van hoofdletters, cijfers of symbolen. Zowel activeren als gewoon inloggen ondersteunt de volledige lengte tot 256 tekens.
+
 ## Belwachttijd
 
 De hoofdbeheerder kan bij **Instellingen → Belwachttijd tussen bedrijven** kiezen tussen uren en dagen. Wisselen rekent de bestaande duur om (48 uur = 2 dagen); sla de instelling op om duur en gekozen eenheid voor alle bedrijven te bewaren. De maximale wachttijd is 365 dagen. De uitzondering voor de eigen terugbelafspraak blijft gelden.

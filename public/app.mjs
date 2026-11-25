@@ -112,7 +112,29 @@ function showInviteLink(result){
 }
 function passwordField(name,label,activating){
  const inputId='auth-'+name;
- return `<div class="field"><label for="${inputId}">${esc(label)}</label><div class="password-field"><input id="${inputId}" name="${name}" type="password" required ${activating?'minlength="12" autocomplete="new-password"':'autocomplete="current-password"'} maxlength="200"><button type="button" class="button ghost password-toggle" data-action="toggle-password" aria-controls="${inputId}" aria-pressed="false" aria-label="${esc(label)} tonen">Tonen</button></div></div>`;
+ return `<div class="field"><label for="${inputId}">${esc(label)}</label><div class="password-field"><input id="${inputId}" name="${name}" type="password" required ${activating?'minlength="12" autocomplete="new-password" aria-describedby="activation-password-requirements activation-password-error" aria-invalid="false"':'autocomplete="current-password"'} maxlength="256"><button type="button" class="button ghost password-toggle" data-action="toggle-password" aria-controls="${inputId}" aria-pressed="false" aria-label="${esc(label)} tonen">Tonen</button></div></div>`;
+}
+function activationPasswordRequirements(){
+ return '<section id="activation-password-requirements" aria-label="Voorwaarden voor je wachtwoord"><strong>Voorwaarden voor je wachtwoord</strong><ul aria-live="polite"><li data-password-rule="length" data-state="pending"><span data-rule-text>Minimaal 12 en maximaal 256 tekens.</span></li><li data-password-rule="match" data-state="pending"><span data-rule-text>Herhaal precies hetzelfde wachtwoord.</span></li></ul></section><p id="activation-password-error" data-activation-password-error role="alert" hidden></p>';
+}
+function showActivationError(form,message){const error=form.querySelector('[data-activation-password-error]');if(error){if(error.textContent!==message)error.textContent=message;error.hidden=!message;}}
+function updateActivationPasswordFeedback(form,{submitted=false,editedField=''}={}){
+ if(form?.getAttribute('id')!=='activation-form')return false;
+ if(submitted)form.dataset.activationSubmitted='true';
+ if(editedField==='password')form.dataset.passwordEdited='true';if(editedField==='passwordConfirm')form.dataset.confirmEdited='true';
+ const password=form.querySelector('[name="password"]'),confirmation=form.querySelector('[name="passwordConfirm"]'),name=form.querySelector('[name="name"]');if(!password||!confirmation)return false;
+ const attempted=form.dataset.activationSubmitted==='true',lengthOK=password.value.length>=12&&password.value.length<=256,matchOK=!!confirmation.value&&password.value===confirmation.value;
+ const lengthState=lengthOK?'valid':attempted||password.value||form.dataset.passwordEdited?'invalid':'pending';
+ const matchState=matchOK?'valid':attempted||confirmation.value||form.dataset.confirmEdited?'invalid':'pending';
+ const rule=(key,value,text)=>{const node=form.querySelector('[data-password-rule="'+key+'"]');if(node){node.dataset.state=value;const label=node.querySelector('[data-rule-text]');if(label.textContent!==text)label.textContent=text;}};
+ rule('length',lengthState,lengthState==='valid'?'Minimaal 12 en maximaal 256 tekens: in orde.':lengthState==='invalid'?'Minimaal 12 en maximaal 256 tekens: nog niet in orde.':'Minimaal 12 en maximaal 256 tekens.');
+ rule('match',matchState,matchState==='valid'?'De twee wachtwoorden zijn gelijk.':matchState==='invalid'?(confirmation.value?'De twee wachtwoorden zijn niet gelijk.':'Herhaal het wachtwoord ook in het tweede veld.'):'Herhaal precies hetzelfde wachtwoord.');
+ password.setAttribute('aria-invalid',String(lengthState==='invalid'));confirmation.setAttribute('aria-invalid',String(matchState==='invalid'));
+ const nameOK=!!name?.value.trim()&&name.value.trim().length<=100;if(name&&attempted){name.setAttribute('aria-invalid',String(!nameOK));name.setAttribute('aria-describedby','activation-password-error');}
+ const message=attempted&&!nameOK?'Vul je naam in (maximaal 100 tekens).':lengthState==='invalid'?(password.value.length>256?'Je wachtwoord is te lang. Gebruik maximaal 256 tekens.':password.value?'Je wachtwoord is te kort. Gebruik minimaal 12 tekens.':'Vul een wachtwoord in van 12 tot 256 tekens.'):matchState==='invalid'?(confirmation.value.length>256?'Het herhaalde wachtwoord is te lang. Gebruik maximaal 256 tekens.':confirmation.value?'De wachtwoorden komen niet overeen. Vul in beide velden hetzelfde wachtwoord in.':'Herhaal je wachtwoord in het tweede veld.') :'';
+ showActivationError(form,message);
+ if(submitted&&message)(!nameOK?name:!lengthOK?password:confirmation)?.focus();
+ return nameOK&&lengthOK&&matchOK;
 }
 function authMarkup(){
  const activating=!!activationToken,invalid=activating&&activationInvalid;
@@ -120,7 +142,7 @@ function authMarkup(){
  let content;
  if(invalid)content='<p>Vraag de beheerder om een nieuwe uitnodigingslink. Een link werkt één keer en heeft een vervaldatum.</p><button class="button secondary" data-action="show-login">Naar inloggen</button>';
  else if(activating&&!activation)content='<p role="status">Uitnodiging controleren…</p>';
- else content='<form id="'+(activating?'activation-form':'login-form')+'">'+(activating?'<div class="invitation-summary"><strong>'+esc(activation.companyName)+'</strong><span>'+esc(activation.role)+'</span><span>Geldig tot '+fmt(activation.expiresAt)+'</span></div><label class="field"><span>Je naam</span><input name="name" required maxlength="100" autocomplete="name" value="'+esc(activation.name)+'"></label>':'')+'<label class="field"><span>E-mailadres</span><input name="email" type="email" required maxlength="160" autocomplete="username" '+(activating?'readonly value="'+esc(activation.email)+'"':'')+'></label>'+passwordField('password',activating?'Kies een wachtwoord':'Wachtwoord',activating)+(activating?passwordField('passwordConfirm','Herhaal je wachtwoord',true)+'<p class="muted help-text">Gebruik minimaal 12 tekens. '+(activation.role==='hoofdbeheerder'?'Als hoofdbeheerder heb je toegang tot alle bedrijven.':'Je account is gekoppeld aan '+esc(activation.companyName)+'.')+'</p>':'<label class="remember-login"><input name="rememberMe" type="checkbox" value="true" '+(authRemember?'checked':'')+'><span>Aangemeld blijven<small>30 dagen op dit apparaat</small></span></label><p class="muted help-text">Nog geen account of je wachtwoord vergeten? Vraag je beheerder om hulp.</p>')+'<button type="submit" class="button primary auth-submit" '+(authBusy?'disabled':'')+'>'+(authBusy?'Even geduld…':activating?'Account activeren':'Inloggen')+'</button></form>';
+ else content='<form id="'+(activating?'activation-form':'login-form')+'"'+(activating?' novalidate':'')+'>'+(activating?'<div class="invitation-summary"><strong>'+esc(activation.companyName)+'</strong><span>'+esc(activation.role)+'</span><span>Geldig tot '+fmt(activation.expiresAt)+'</span></div><label class="field"><span>Je naam</span><input name="name" required maxlength="100" autocomplete="name" value="'+esc(activation.name)+'"></label>':'')+'<label class="field"><span>E-mailadres</span><input name="email" type="email" required maxlength="160" autocomplete="username" '+(activating?'readonly value="'+esc(activation.email)+'"':'')+'></label>'+passwordField('password',activating?'Kies een wachtwoord':'Wachtwoord',activating)+(activating?passwordField('passwordConfirm','Herhaal je wachtwoord',true)+activationPasswordRequirements()+'<p class="muted help-text">'+(activation.role==='hoofdbeheerder'?'Als hoofdbeheerder heb je toegang tot alle bedrijven.':'Je account is gekoppeld aan '+esc(activation.companyName)+'.')+'</p>':'<label class="remember-login"><input name="rememberMe" type="checkbox" value="true" '+(authRemember?'checked':'')+'><span>Aangemeld blijven<small>30 dagen op dit apparaat</small></span></label><p class="muted help-text">Nog geen account of je wachtwoord vergeten? Vraag je beheerder om hulp.</p>')+'<button type="submit" class="button primary auth-submit" '+(authBusy?'disabled':'')+'>'+(authBusy?'Even geduld…':activating?'Account activeren':'Inloggen')+'</button></form>';
  return intro+content+'<div class="auth-bottom">'+icon('shield')+' Alleen toegang na een uitnodiging.</div></section></main>';
 }
 function renderAuth(){clearSourceLogbook();document.body.classList.remove('overlay-open');$('#overlay-root').innerHTML='';$('#toast-root').innerHTML='';$('#app').innerHTML=authMarkup();}
@@ -133,14 +155,20 @@ async function initialize(){
  }catch(error){authError=error.message;renderAuth();}
 }
 async function authenticate(form,data){
+ if(authBusy)return;
  const activating=form.getAttribute('id')==='activation-form';if(!activating)authRemember=data.rememberMe==='true';
- if(activating&&data.password!==data.passwordConfirm)throw Error('De wachtwoorden komen niet overeen.');
- if(activating&&data.password.length<12)throw Error('Gebruik een wachtwoord van minimaal 12 tekens.');
+ if(activating&&!updateActivationPasswordFeedback(form,{submitted:true}))return;
  authBusy=true;authError='';const submit=form.querySelector('[type="submit"]');submit.disabled=true;submit.textContent='Even geduld…';
+ if(activating){showActivationError(form,'');form.querySelectorAll('input,button').forEach(control=>{control.dataset.authWasDisabled=String(control!==submit&&control.disabled);control.disabled=true;});}
  try{
   session=await api(activating?'/api/auth/activate':'/api/auth/login',{method:'POST',body:activating?{token:activationToken,name:data.name,password:data.password}:{email:data.email,password:data.password,rememberMe:authRemember},publicRequest:true});
+  if(activating)form.querySelectorAll('input[type="password"],input[name="password"],input[name="passwordConfirm"]').forEach(input=>{input.value='';});
   activationToken=null;activation=null;authBusy=false;if(location.pathname==='/login'||location.pathname==='/login/')history.replaceState(null,'','/#'+ui.route);ui.companyId=session.user?.companyId||null;ui.drawer=null;ui.modal=null;await refreshState(ui.companyId,{force:true});
- }catch(error){authBusy=false;authError=error.message;renderAuth();}
+ }catch(error){
+  authBusy=false;authError=error.message;
+  if(activating&&activationToken&&form.isConnected){form.querySelectorAll('[data-auth-was-disabled]').forEach(control=>{control.disabled=control.dataset.authWasDisabled==='true';delete control.dataset.authWasDisabled;});submit.textContent='Account activeren';showActivationError(form,error.message||'Je account kon niet worden geactiveerd. Probeer het opnieuw.');}
+  else renderAuth();
+ }finally{delete data.password;delete data.passwordConfirm;}
 }
 function toast(text,tone='green'){const id=uid('toast');transient.push({id,text,tone});renderToasts();setTimeout(()=>{transient=transient.filter(t=>t.id!==id);renderToasts();},6500);}
 function callbacks(){return state.leads.flatMap(l=>work(l).callbacks.map(cb=>({...cb,lead:l}))).filter(c=>!c.done).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));}
@@ -830,7 +858,7 @@ document.addEventListener('click',async e=>{
  }catch(error){if(target.isConnected){target.disabled=false;target.removeAttribute('aria-busy');}if(state)toast(error.message||'De actie is niet gelukt.','amber');else{authError=error.message;renderAuth();}}
 });
 document.addEventListener('change',async e=>{
- const el=e.target;if(!state)return;
+ const el=e.target;const activationForm=el.closest('#activation-form');if(activationForm){updateActivationPasswordFeedback(activationForm,{editedField:el.name});return;}if(!state)return;
  if(el.dataset.field==='query')return;
  if(el.hasAttribute('data-logbook-filter')){if(!isChief())return;const key=el.dataset.logbookFilter;if(['status','source'].includes(key)){sourceLogbook[key]=el.value;sourceLogbook.entries=[];sourceLogbook.total=0;sourceLogbook.hasMore=false;await refreshSourceLogbook();}return;}
  if(el.hasAttribute('data-account-role')){updateAccountCompanyField(el);return;}
@@ -858,8 +886,15 @@ function updateLeadSearch(e){
  ui.query=input.value;clearTimeout(searchTimer);if(e.isComposing)return;
  searchTimer=setTimeout(()=>{if(input.isConnected&&input===$('#lead-search')&&!ui.modal&&!ui.drawer)renderLeadSearchResults();},180);
 }
-document.addEventListener('input',e=>{updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&leadContactFields.includes(e.target.dataset.work)&&e.target.closest('.workbook-drawer')?.dataset.drawerId===ui.drawer&&!leadDraft?.saving){const draft=getLeadDraft();draftLeadField(draft,e.target.dataset.work,e.target.value);draft.error='';updateLeadSaveUI();}if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
+document.addEventListener('input',e=>{const activationForm=e.target.closest('#activation-form');if(activationForm)updateActivationPasswordFeedback(activationForm,{editedField:e.target.name});updateLeadSearch(e);if(state&&ui.drawer&&e.target.isConnected&&leadContactFields.includes(e.target.dataset.work)&&e.target.closest('.workbook-drawer')?.dataset.drawerId===ui.drawer&&!leadDraft?.saving){const draft=getLeadDraft();draftLeadField(draft,e.target.dataset.work,e.target.value);draft.error='';updateLeadSaveUI();}if(e.target.hasAttribute('data-scraper-time'))editScraperScheduleTime(e.target);if(state&&ui.drawer&&e.target.isConnected&&e.target.matches('#note-form textarea[name="text"]')&&!leadDraft?.saving)draftLeadNote(getLeadDraft(),e.target.value);});
 document.addEventListener('compositionend',updateLeadSearch);
+document.addEventListener('paste',e=>{
+ const input=e.target,form=input.closest('#activation-form');if(!form||!['password','passwordConfirm'].includes(input.name)||!e.clipboardData||authBusy)return;
+ const text=e.clipboardData.getData('text'),start=input.selectionStart??input.value.length,end=input.selectionEnd??start,value=input.value.slice(0,start)+text+input.value.slice(end);
+ // Keep an oversized paste visible for correction instead of silently changing the chosen password.
+ if(value.length>256){e.preventDefault();input.value=value;input.setSelectionRange(start+text.length,start+text.length);updateActivationPasswordFeedback(form,{editedField:input.name});}
+});
+document.addEventListener('invalid',e=>{const form=e.target.closest('#activation-form');if(form)updateActivationPasswordFeedback(form,{submitted:true});},true);
 document.addEventListener('submit',async e=>{
  e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));
  if(form.getAttribute('id')==='login-form'||form.getAttribute('id')==='activation-form'){try{await authenticate(form,data);}catch(error){authError=error.message;renderAuth();}return;}
