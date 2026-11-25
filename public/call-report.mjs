@@ -34,7 +34,7 @@ export function buildCallReport(state,{companyId='all',sellerId='all',groupBy='d
  if(from&&to&&from>to)return empty('Kies een einddatum op of na de begindatum.');
  if(from&&to&&(civilTime(to)-civilTime(from))/DAY>3660)return empty('Kies een periode van maximaal 10 jaar, of laat de datumfilters leeg voor alle geregistreerde belmomenten.');
  const instant=timestamp(now);if(!Number.isFinite(instant))return empty('Het peilmoment voor de belrapportage is ongeldig.');
- const companies=new Map(array(state?.companies).filter(company=>text(company?.id)).map(company=>[company.id,text(company.name)||'Onbekend bedrijf']));
+ const companies=new Map([...array(state?.archivedCompanies),...array(state?.companies)].filter(company=>text(company?.id)).map(company=>[company.id,text(company.name)||'Onbekend bedrijf']));
  const users=new Map(array(state?.users).filter(user=>text(user?.id)).map(user=>[user.id,user]));
  const calls=[],ids=new Set(),signatures=new Set();
  function accept(call,contextCompany,contextLead,{fallback=false}={}){

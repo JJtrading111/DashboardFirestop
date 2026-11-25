@@ -51,7 +51,9 @@ test('workspace.save stores all follow-up fields and the draft note together wit
  assert.equal(w.status,'opvolgen');assert.equal(w.priority,'high');assert.equal(w.ownerId,seller.user.id);
  assert.equal(w.commitment,true);assert.equal(w.calculation,true);assert.ok(Number.isFinite(Date.parse(w.commitmentAt)));assert.equal(w.calculationAt,w.commitmentAt);
  assert.deepEqual(w.notes,[{id:draft.id,text:draft.text.trim(),authorId:owner.user.id,authorName:'Werkplekbeheerder',createdAt:w.commitmentAt}]);
- assert.deepEqual(result.result,{saved:true,noteAdded:true});assert.equal(result.state.feed.length,before.feed.length+1);
+ assert.deepEqual(result.result,{saved:true,noteAdded:true});assert.equal(result.state.feed.length,before.feed.length+2);
+ assert.equal(result.state.feed[0].type,'status');assert.equal(result.state.feed[0].statusChange.toName,'Opvolgen');
+ assert.match(result.state.feed[1].text,/Gespreksnotitie toegevoegd/);
 });
 
 test('invalid fields or draft notes reject the whole HTTP save without partial fields, notes or feed entries',async t=>{

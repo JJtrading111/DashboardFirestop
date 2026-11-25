@@ -118,3 +118,67 @@ test('retained action-only history and unusual old status remain visible without
  const freeze=value=>{if(value&&typeof value==='object'){Object.freeze(value);for(const child of Object.values(value))freeze(child);}return value;};freeze(state);
  const data=buildAdminOverview(state,{now:NOW});assert.equal(row(data,'a').workedLeads,2);assert.equal(row(data,'a').columns.find(column=>column.id==='__unknown').count,1);assert.equal(row(data,'a').columns[0].count,1);
 });
+
+test('notes and explicit status changes have their own focused history without guessing at older generic updates',()=>{
+ const state=base(),at='2026-11-25T09:00:00Z';
+ state.companies[0].columns[0].name='Nieuwe kolomnaam';
+ state.workspaces.a.one=workspace({notes:[{id:'note-new',createdAt:at,authorId:'seller',authorName:'Naam bij notitie',text:'Vervolg besproken.'}]});
+ state.feed=[
+  {id:'move',companyId:'a',leadId:'one',at,type:'status',authorId:'seller',authorName:'Naam bij verplaatsing',text:'Kanban-status gewijzigd: Nieuw → In contact · Gedeeld project',statusChange:{fromId:'fresh',fromName:'Nieuw',toId:'working',toName:'In contact'}},
+  {id:'note-feed',companyId:'a',leadId:'one',at,type:'update',authorName:'Naam bij notitie',text:'Gespreksnotitie toegevoegd: Gedeeld project'},
+  {id:'old-generic',companyId:'a',leadId:'one',at,type:'update',authorName:'Collega',text:'Opvolging bijgewerkt: Gedeeld project'},
+  {id:'old-status-looking-text',companyId:'a',leadId:'one',at,type:'update',authorName:'Collega',text:'Kanban-status gewijzigd, oude details onbekend'},
+  {id:'central',companyId:null,leadId:'one',at,type:'status',authorName:'Bron',text:'Bron gewijzigd'}
+ ];
+ const before=structuredClone(state),focused=buildAdminOverview(state,{now:NOW,activityType:'notes-status'});
+ assert.equal(focused.activityTotal,2);assert.deepEqual(new Set(focused.activity.map(item=>item.type)),new Set(['note','status']));
+ const change=focused.activity.find(item=>item.type==='status');
+ assert.equal(change.actorName,'Naam bij verplaatsing');assert.equal(change.actorId,'seller');assert.equal(change.companyId,'a');
+ assert.deepEqual(change.statusChange,{fromId:'fresh',fromName:'Nieuw',toId:'working',toName:'In contact'});
+ assert.notEqual(change.statusChange.fromName,state.companies[0].columns[0].name,'Current column renames cannot rewrite historical snapshots');
+ assert.equal(buildAdminOverview(state,{now:NOW,activityType:'status'}).activityTotal,1);
+ const generic=buildAdminOverview(state,{now:NOW,activityType:'update'});assert.equal(generic.activityTotal,2);assert.ok(generic.activity.every(item=>!Object.hasOwn(item,'statusChange')));
+ assert.equal(buildAdminOverview(state,{now:NOW,activityType:'all'}).activityTotal,5,'All-events history remains available, including central updates');
+ assert.deepEqual(state,before);
+});
+
+test('company weekly call counts start on Amsterdam Monday and deduplicate stored copies while retaining every real call',()=>{
+ const state=base(),calls=[
+  {id:'previous-sunday',at:'2026-11-22T22:59:00Z',userId:'seller',userName:'Collega'},
+  {id:'monday-midnight',at:'2026-11-22T23:00:00Z',userId:'seller',userName:'Collega'},
+  {id:'monday-later',at:'2026-11-23T10:00:00Z',userId:'seller',userName:'Collega'},
+  {id:'today',at:'2026-11-25T10:00:00Z',userId:'seller',userName:'Collega'}
+ ];
+ state.workspaces.a.one=workspace({calls});
+ state.workspaces.b.one=workspace({status:'new',calls:[{id:'another-real-call',at:'2026-11-24T10:00:00Z',userId:'seller',userName:'Collega bij ander bedrijf'}]});
+ state.callLog=calls.map(call=>({...call,companyId:'a',leadId:'one'}));
+ const data=buildAdminOverview(state,{now:NOW,period:'today',companyId:'b',activityType:'note'});
+ assert.equal(data.today,'2026-11-25');assert.equal(data.weekStart,'2026-11-23');
+ assert.equal(row(data,'a').callsThisWeek,3);assert.equal(row(data,'a').callsToday,1);assert.equal(row(data,'a').totalCalls,4);
+ assert.equal(row(data,'b').callsThisWeek,1);assert.equal(data.totals.callsThisWeek,4);assert.equal(data.totals.totalCalls,5);
+ assert.equal(data.activityTotal,0,'History filters must not change current weekly counters');
+});
+
+test('weekly Monday boundaries and repeated Sunday hours follow the Amsterdam calendar at both DST transitions',()=>{
+ for(const [now,weekStart,inside,outside]of [
+  ['2026-03-29T21:30:00Z','2026-03-23',['2026-03-22T23:00:00Z','2026-03-29T01:30:00Z'],'2026-03-22T22:59:00Z'],
+  ['2026-03-30T00:30:00Z','2026-03-30',['2026-03-29T22:00:00Z'],'2026-03-29T21:59:00Z'],
+  ['2026-10-25T22:30:00Z','2026-10-19',['2026-10-18T22:00:00Z','2026-10-25T00:30:00Z','2026-10-25T01:30:00Z'],'2026-10-18T21:59:00Z'],
+  ['2026-10-26T00:30:00Z','2026-10-26',['2026-10-25T23:00:00Z'],'2026-10-25T22:59:00Z']
+ ]){
+  const state=base();state.workspaces.a.one=workspace({calls:[...inside.map((at,index)=>({id:'inside-'+index,at,userName:'Collega'})),{id:'outside',at:outside,userName:'Collega'}]});
+  const data=buildAdminOverview(state,{now:Date.parse(now)});assert.equal(data.weekStart,weekStart);assert.equal(data.totals.callsThisWeek,inside.length,now);assert.equal(data.totals.totalCalls,inside.length+1);
+ }
+});
+
+test('global attention stays visible when only the history is narrowed to one company',()=>{
+ const state=base(),at='2026-11-25T09:00:00Z';
+ state.workspaces.a.one=workspace({notes:[{id:'a-note',createdAt:at,text:'Notitie Alpha',authorName:'Collega Alpha'}],callbacks:[{id:'a-overdue',dueAt:at,creatorName:'Collega Alpha'}]});
+ state.workspaces.b.two=workspace({status:'new',priority:'high',notes:[{id:'b-note',createdAt:at,text:'Notitie Beta',authorName:'Collega Beta'}]});
+ const before=structuredClone(state),selected=buildAdminOverview(state,{now:NOW,companyId:'a',attentionCompanyId:'all',activityType:'notes-status'});
+ assert.equal(selected.activityTotal,1);assert.equal(selected.activity[0].companyId,'a');assert.equal(selected.attentionTotal,2);
+ assert.deepEqual(new Set(selected.attention.map(item=>item.companyId)),new Set(['a','b']));
+ assert.equal(buildAdminOverview(state,{now:NOW,companyId:'a'}).attentionTotal,1,'The existing helper default still follows its company filter');
+ const missing=buildAdminOverview(state,{now:NOW,companyId:'missing',attentionCompanyId:'all'});
+ assert.equal(missing.activityTotal,0);assert.equal(missing.attentionTotal,2);assert.deepEqual(missing.totals,selected.totals);assert.deepEqual(state,before);
+});

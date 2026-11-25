@@ -89,11 +89,12 @@ test('the chief overview shows all company work and history through the real API
  const filter=(f,name)=>f.page.locator('[data-admin-filter="'+name+'"]');
  const activities=f=>f.page.locator('[data-admin-activity]');
  async function select(f,name,value){await filter(f,name).selectOption(value);}
+ async function showCompanyCards(f){const details=f.page.locator('.admin-company-details');if(await details.count())await details.evaluate(node=>{node.open=true;});}
 
  await t.test('a chief starts with all companies, correct central totals and actual named work',async t=>{
-  const f=await fixture(t);await f.page.locator('.admin-overview').waitFor({state:'visible'});
+  const f=await fixture(t);await f.page.locator('.admin-overview').waitFor({state:'visible'});await showCompanyCards(f);
   assert.equal(await f.page.locator('.admin-company-card').count(),3);
-  for(const [name,value]of Object.entries({centralLeads:3,callsToday:2,overdueCallbacks:2,commitments:2}))assert.match(await f.page.locator('[data-admin-stat="'+name+'"]').innerText(),new RegExp('\\b'+value+'\\b'),name);
+  for(const [name,value]of Object.entries({callsToday:2,callsThisWeek:2,callers:2}))assert.match(await f.page.locator('[data-admin-stat="'+name+'"]').innerText(),new RegExp('\\b'+value+'\\b'),name);
   assert.ok((await f.card('c-noord').innerText()).includes('Noord Projectbouw'));
   assert.ok((await f.card(f.south.id).innerText()).includes('Calculatiegesprek'));
   assert.ok((await f.card(f.empty.id).innerText()).includes('Leeg bedrijf'));
@@ -120,7 +121,7 @@ test('the chief overview shows all company work and history through the real API
   assert.equal(await filter(f,'company').inputValue(),f.south.id);assert.equal(await filter(f,'period').inputValue(),'all');assert.equal(await filter(f,'type').inputValue(),'note');assert.deepEqual(f.errors,[]);
  });
  await t.test('opening a company and returning preserves the global overview and its selection',async t=>{
-  const f=await fixture(t);await f.global();await select(f,'period','all');await select(f,'type','note');
+  const f=await fixture(t);await f.global();await select(f,'period','all');await select(f,'type','note');await showCompanyCards(f);
   await f.card(f.south.id).locator('[data-action="admin-open-company"]').first().click();await f.page.waitForURL('**/#kanban');
   assert.equal(await f.page.locator('#company-switch').inputValue(),f.south.id);await f.page.locator('[data-action="admin-return-overview"]').click();await f.page.waitForURL('**/#all-companies');
   assert.equal(await filter(f,'period').inputValue(),'all');assert.equal(await filter(f,'type').inputValue(),'note');assert.equal(await f.page.locator('.admin-company-card').count(),3);assert.deepEqual(f.errors,[]);
@@ -144,7 +145,7 @@ test('the chief overview shows all company work and history through the real API
   const response=await f.dispatch('/api/state?companyId=c-noord',{headers:f.current.headers});assert.equal(response.status,403);assert.deepEqual(f.errors,[]);
  });
  for(const mobile of [false,true])await t.test((mobile?'mobile':'desktop')+': company cards, filters and history fit the viewport',async t=>{
-  const f=await fixture(t,{mobile}),viewport=f.page.viewportSize();await f.page.locator('.admin-overview').waitFor({state:'visible'});
+  const f=await fixture(t,{mobile}),viewport=f.page.viewportSize();await f.page.locator('.admin-overview').waitFor({state:'visible'});await showCompanyCards(f);
   for(const element of await f.page.locator('.admin-company-card,[data-admin-filter],[data-admin-activity],[data-admin-attention]').all()){
    const box=await element.boundingBox();assert.ok(box&&box.width>0&&box.x>=-1&&box.x+box.width<=viewport.width+1,'Overview content must fit horizontally');
   }

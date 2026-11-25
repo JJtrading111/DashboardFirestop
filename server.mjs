@@ -253,7 +253,7 @@ export function createApp(options={}){
  const limits=new Map();let hashing=0;
  function rate(key,maximum,period=15*60000){const now=Date.now();let hit=limits.get(key);if(!hit||hit.until<now){hit={count:0,until:now+period};limits.set(key,hit);}if(++hit.count>maximum)fail(429,'Te veel pogingen. Probeer het later opnieuw.');if(limits.size>5000)for(const [k,v]of limits)if(v.until<now)limits.delete(k);}
  async function hashWork(fn){if(hashing>=8)fail(429,'Er zijn veel aanmeldpogingen. Probeer het over een moment opnieuw.');hashing++;try{return await fn();}finally{hashing--;}}
- function invitationPublic(row,s){return{id:row.id,name:row.name,email:row.email,companyId:row.company_id||null,companyName:row.company_id?s.companies.find(c=>c.id===row.company_id)?.name||'Bedrijf':'Alle bedrijven',role:row.role,createdAt:iso(row.created_at),expiresAt:iso(row.expires_at),status:row.status==='pending'&&row.expires_at<=Date.now()?'expired':row.status,creatorId:row.creator_id};}
+ function invitationPublic(row,s){return{id:row.id,name:row.name,email:row.email,companyId:row.company_id||null,companyName:row.company_id?[...s.companies,...(s.archivedCompanies||[])].find(c=>c.id===row.company_id)?.name||'Bedrijf':'Alle bedrijven',role:row.role,createdAt:iso(row.created_at),expiresAt:iso(row.expires_at),status:row.status==='pending'&&row.expires_at<=Date.now()?'expired':row.status,creatorId:row.creator_id};}
  function invitationByToken(raw){const row=db.prepare('SELECT * FROM invitations WHERE token_hash=?').get(digest(tokenValue(raw)));if(!row||row.status!=='pending'||row.expires_at<=Date.now())fail(410,'Deze uitnodigingslink is verlopen, ingetrokken of al gebruikt. Vraag de beheerder om een nieuwe link.');return row;}
  function cookieSession(req){const raw=req.headers.cookie?.split(';').map(s=>s.trim()).find(s=>s.startsWith('bouw_session='))?.slice(13);if(!raw||!/^[A-Za-z0-9_-]{43}$/.test(raw))return null;const session=db.prepare('SELECT * FROM sessions WHERE token_hash=? AND expires_at>?').get(digest(raw),Date.now());if(!session)return null;const user=readState().users.find(u=>u.id===session.user_id&&u.status==='actief');return user?{...session,user}:null;}
  function sessionBody(session){return {authenticated:true,user:publicUser(session.user),csrfToken:session.csrf};}
@@ -266,7 +266,7 @@ export function createApp(options={}){
  }
  function csrf(req,session){checkOrigin(req);const value=req.headers['x-csrf-token'],actual=typeof value==='string'?Buffer.from(value):Buffer.alloc(0),expected=Buffer.from(session.csrf);if(actual.length!==expected.length||!timingSafeEqual(actual,expected))fail(403,'Je sessie is gewijzigd. Vernieuw de pagina en probeer opnieuw.');}
  function scoped(s,actor,cid){
-  const chief=actor.role==='hoofdbeheerder';if(!chief&&cid!==actor.companyId)fail(403,'Je kunt alleen je eigen bedrijf openen.');if(chief&&!cid)cid=actor.companyId||s.companies[0]?.id;if(!s.companies.some(c=>c.id===cid))fail(404,'Dit bedrijf bestaat niet.');
+  const chief=actor.role==='hoofdbeheerder';if(!chief&&cid!==actor.companyId)fail(403,'Je kunt alleen je eigen bedrijf openen.');if(chief&&!cid)cid=actor.companyId||s.companies[0]?.id||null;if(!s.companies.some(c=>c.id===cid)&&!(chief&&!cid&&!s.companies.length))fail(404,'Dit bedrijf bestaat niet.');
   const invitations=db.prepare('SELECT * FROM invitations ORDER BY created_at DESC').all().filter(i=>chief||i.company_id===actor.companyId).map(i=>invitationPublic(i,s));
   if(chief)return{state:{...s,sources:s.sources.map(source=>({...source,...(sourceProvider(source)==='bouwberichten'?{scraper:scraperBroker.sourceSummary(source.id)}:{})})),users:s.users.map(publicUser),invitations},userId:actor.id,companyId:cid};
   const own=s.users.filter(u=>u.companyId===actor.companyId).map(publicUser);
@@ -274,7 +274,8 @@ export function createApp(options={}){
   // Transferred owners remain as anonymous historical labels; never expose their new company or email.
   for(const historicId of referenced)if(!own.some(u=>u.id===historicId)){const original=s.users.find(u=>u.id===historicId);own.push({id:historicId,name:original?.name||'Voormalige medewerker',email:'',companyId:null,role:'verkoper',status:'historisch'});}
   const latest=new Map();for(const call of s.callLog){const old=latest.get(call.leadId);if(!old||Date.parse(call.at)>Date.parse(old.at))latest.set(call.leadId,call);}
-  return{state:{...s,companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
+  const {archivedCompanies,...ownState}=s;
+  return{state:{...ownState,companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
  }
  function requireCompany(s,cid){const c=s.companies.find(c=>c.id===cid);if(!c)fail(404,'Dit bedrijf bestaat niet.');return c;}
  function accountCompany(s,role,value){
@@ -295,7 +296,15 @@ export function createApp(options={}){
   let filter={filterUrl:'',filterParameters:[],filterSummary:''};if(raw.trim()){try{filter=normalizeBouwberichtenFilterUrl(raw);}catch(error){fail(400,error.message);}}
   return{provider,...filter};
  }
- function addFeed(s,actor,cid,message,leadId=null,type='update'){s.feed.unshift({id:id('feed'),companyId:cid,leadId,type,text:message,authorName:actor.name,at:iso(Date.now())});if(s.feed.length>10000)s.feed.length=10000;}
+ function addFeed(s,actor,cid,message,leadId=null,type='update',metadata={}){
+  const entry={id:id('feed'),companyId:cid,leadId,type,text:message,authorName:actor.name,at:metadata.at||iso(Date.now())};
+  if(metadata.statusChange){entry.authorId=actor.id;entry.statusChange={...metadata.statusChange};}
+  s.feed.unshift(entry);if(s.feed.length>10000)s.feed.length=10000;
+ }
+ function addStatusFeed(s,actor,cid,company,lead,from,to,at=iso(Date.now())){
+  const statusChange={fromId:typeof from==='string'?from:'',fromName:company.columns.find(column=>column.id===from)?.name||'Onbekende status',toId:to,toName:company.columns.find(column=>column.id===to)?.name||'Onbekende status'};
+  addFeed(s,actor,cid,`Kanban-status gewijzigd: ${statusChange.fromName} → ${statusChange.toName} · ${lead.title}`,lead.id,'status',{at,statusChange});
+ }
  function managedImportSource(s,sourceId){const source=s.sources.find(item=>item.id===sourceId&&!item.deleted);if(!source)fail(404,'Deze bron bestaat niet.');if(!isLeadSource(source))fail(400,'Deze bron ondersteunt geen leadimport.');return source;}
  function authorizedImport(req,sourceId){
   const match=/^Bearer ([A-Za-z0-9_-]{43})$/i.exec(String(req.headers.authorization||'')),source=readState().sources.find(item=>item.id===sourceId),credential=match&&db.prepare('SELECT * FROM source_import_credentials WHERE source_id=? AND token_hash=?').get(sourceId,digest(match[1]));
@@ -369,14 +378,26 @@ export function createApp(options={}){
   const raw=token(),now=Date.now(),iid=id('invite');db.prepare('INSERT INTO invitations(id,token_hash,email,name,company_id,role,user_id,created_at,expires_at,status,creator_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(iid,digest(raw),email,name,cid??'',role,null,now,now+INVITE_AGE,'pending',actor.id);const invitation=invitationPublic(db.prepare('SELECT * FROM invitations WHERE id=?').get(iid),s);addFeed(s,actor,cid,`Uitnodiging voorbereid voor ${name}`);return{invitation,token:raw};
  }
  function action(actor,type,cid,p,requestOrigin){return transaction(()=>{
-  const s=readState(),fresh=s.users.find(u=>u.id===actor.id&&u.status==='actief');if(!fresh)fail(401,'Meld je opnieuw aan.');actor=fresh;const company=requireCompany(s,cid);if(actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je kunt alleen je eigen bedrijf wijzigen.');let result;
+  const s=readState(),fresh=s.users.find(u=>u.id===actor.id&&u.status==='actief');if(!fresh)fail(401,'Meld je opnieuw aan.');actor=fresh;const withoutCompany=actor.role==='hoofdbeheerder'&&!cid&&!s.companies.length&&/^(?:company\.|user\.update$|source\.|settings\.update$|invitation\.|demo\.remove$)/.test(type),company=withoutCompany?null:requireCompany(s,cid);if(actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je kunt alleen je eigen bedrijf wijzigen.');let result;
   switch(type){
    case'demo.remove':{
     requireChief(actor);
     result=removeDemoLeads(s,actor,cid);
     break;
    }
-   case'workspace.update':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');w[field]=field==='ownerId'?(p.value||null):p.value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);break;}
+   case'workspace.update':{
+    const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id),field=p.field;
+    if(!['status','priority','ownerId','commitment','calculation'].includes(field))fail(400,'Dit veld kan niet worden aangepast.');
+    if(field==='status'&&!company.columns.some(c=>c.id===p.value))fail(400,'Kies een geldige Kanban-status.');
+    if(field==='priority'&&!['high','medium','low'].includes(p.value))fail(400,'Kies een geldige prioriteit.');
+    if(field==='ownerId'&&p.value)requireMember(s,p.value,cid);
+    if(['commitment','calculation'].includes(field)&&typeof p.value!=='boolean')fail(400,'Gebruik een geldig vinkje.');
+    const previous=w[field],value=field==='ownerId'?(p.value||null):p.value;
+    if(field==='status'&&previous===value)break;
+    w[field]=value;if(['commitment','calculation'].includes(field))w[field+'At']=p.value?iso(Date.now()):null;
+    if(field==='status')addStatusFeed(s,actor,cid,company,lead,previous,value);else addFeed(s,actor,cid,`Opvolging bijgewerkt: ${lead.title}`,lead.id);
+    break;
+   }
    case'workspace.contact.select':{
     const lead=requireLead(s,p.leadId),workspace=getWorkspace(s,cid,lead.id);
     if(Object.keys(p).some(key=>!['leadId','partyIndex','partyFingerprint','expectedContact','confirmed'].includes(key))||!Number.isInteger(p.partyIndex)||typeof p.confirmed!=='boolean'||typeof p.partyFingerprint!=='string'||p.partyFingerprint.length>4096||typeof p.expectedContact!=='string'||p.expectedContact.length>4096)fail(400,'Kies een geldige betrokken partij en bevestig de huidige contactgegevens.');
@@ -416,10 +437,11 @@ export function createApp(options={}){
      if(existing&&(existing.authorId!==actor.id||existing.text!==note.text))fail(409,'Deze gespreksnotitie is al met andere inhoud opgeslagen.');
      noteAdded=!existing;
     }
-    const now=iso(Date.now());let changed=false;
-    for(const [field,value]of Object.entries(values))if(w[field]!==value){w[field]=value;changed=true;if(['commitment','calculation'].includes(field))w[field+'At']=value?now:null;}
+    const now=iso(Date.now()),previousStatus=w.status;let changedOther=false;
+    for(const [field,value]of Object.entries(values))if(w[field]!==value){w[field]=value;if(field!=='status')changedOther=true;if(['commitment','calculation'].includes(field))w[field+'At']=value?now:null;}
     if(noteAdded){w.notes.push({...note,authorId:actor.id,authorName:actor.name,createdAt:now});if(!Object.hasOwn(values,'ownerId')&&w.ownerId==null&&actor.companyId===cid)w.ownerId=actor.id;}
-    if(changed||noteAdded)addFeed(s,actor,cid,noteAdded?`Gespreksnotitie toegevoegd: ${lead.title}`:`Opvolging bijgewerkt: ${lead.title}`,lead.id);
+    if(noteAdded||changedOther)addFeed(s,actor,cid,noteAdded?`Gespreksnotitie toegevoegd: ${lead.title}`:`Opvolging bijgewerkt: ${lead.title}`,lead.id,'update',{at:now});
+    if(previousStatus!==w.status)addStatusFeed(s,actor,cid,company,lead,previousStatus,w.status,now);
     result={saved:true,noteAdded};break;
    }
    case'note.add':{const lead=requireLead(s,p.leadId),w=getWorkspace(s,cid,lead.id);w.notes.push({id:id('note'),text:text(p.text,'Notitie',4000),authorId:actor.id,authorName:actor.name,createdAt:iso(Date.now())});w.ownerId??=actor.companyId===cid?actor.id:null;addFeed(s,actor,cid,`Gespreksnotitie toegevoegd: ${lead.title}`,lead.id);break;}
@@ -456,6 +478,15 @@ export function createApp(options={}){
    case'lead.create':{const source=p.source;if(!s.sources.some(item=>item.id===source&&!item.deleted&&item.id!=='outlook'&&(!item.kind||item.kind==='lead')))fail(400,'Kies een geldige broncategorie.');const now=iso(Date.now()),lead={id:id('lead'),title:text(p.title,'Projectnaam',150),organization:text(p.organization,'Organisatie',120),city:text(p.city,'Plaats',100),source,contact:text(p.contact,'Contactpersoon',100),phone:text(p.phone,'Telefoonnummer',30),email:emailValue(p.email),description:text(p.description,'Projectomschrijving',3000),phase:'Oriëntatie',budget:'Nog niet bekend',createdAt:now,updatedAt:now,tags:['Handmatig toegevoegd'],demo:false};if(!/^[+\d ()-]{6,30}$/.test(lead.phone))fail(400,'Vul een geldig telefoonnummer in.');s.leads.unshift(lead);const w=getWorkspace(s,cid,lead.id);w.ownerId=actor.companyId===cid?actor.id:null;if(p.status){if(!company.columns.some(c=>c.id===p.status))fail(400,'Kies een geldige Kanban-status.');w.status=p.status;}s.feed.unshift({id:id('feed'),companyId:null,leadId:lead.id,type:'new',text:`Nieuwe centrale lead: ${lead.title}`,authorName:'Handmatig toegevoegd',at:now});result={lead,leadId:lead.id};break;}
    case'columns.update':{requireManager(actor,cid);if(!Array.isArray(p.columns)||p.columns.length!==company.columns.length||p.columns.length>30)fail(400,'Behoud de bestaande kolommen.');const next=p.columns.map(c=>({id:c.id,name:text(c.name,'Kolomnaam',35)}));if(next.some(c=>!company.columns.some(old=>old.id===c.id))||new Set(next.map(c=>c.id)).size!==next.length)fail(400,'De kolomindeling is ongeldig.');if(p.newColumn){if(next.length>=30)fail(400,'Gebruik maximaal 30 kolommen.');next.push({id:id('col'),name:text(p.newColumn,'Nieuwe kolom',35)});}if(new Set(next.map(c=>c.name.toLowerCase())).size!==next.length)fail(400,'Gebruik verschillende kolomnamen.');company.columns=next;addFeed(s,actor,cid,'Kanban-kolommen bijgewerkt');break;}
    case'company.create':{requireChief(actor);const name=text(p.name,'Bedrijfsnaam',120);if(s.companies.some(c=>c.name.toLowerCase()===name.toLowerCase()))fail(409,'Dit bedrijf bestaat al.');const c={id:id('company'),name,initials:name.split(/\s+/).map(x=>x[0]).slice(0,2).join('').toUpperCase(),color:'#dce8ff',columns:[{id:'nieuw',name:'Nieuw'},{id:'contact',name:'In contact'},{id:'opvolgen',name:'Opvolgen'},{id:'offerte',name:'Offerte'},{id:'afgerond',name:'Afgerond'}]};s.companies.push(c);s.workspaces[c.id]={};result={company:c};break;}
+   case'company.delete':{
+    requireChief(actor);const targetId=text(p.companyId,'Bedrijf',100),target=requireCompany(s,targetId);
+    if(p.confirmed!==true)fail(400,'Bevestig eerst dat je dit bedrijf wilt verwijderen.');
+    if(s.users.some(user=>user.companyId===targetId))fail(409,'Dit bedrijf heeft nog gebruikers. Verplaats eerst alle gebruikers naar een ander bedrijf.');
+    const removedAt=iso(Date.now());s.archivedCompanies??=[];s.archivedCompanies.push({...target,deletedAt:removedAt,deletedById:actor.id,deletedByName:actor.name});s.companies=s.companies.filter(item=>item.id!==targetId);
+    const revokedInvitations=Number(db.prepare("UPDATE invitations SET status='revoked' WHERE company_id=? AND status='pending'").run(targetId).changes);
+    addFeed(s,actor,targetId,`Bedrijf verwijderd: ${target.name}. Historische telefoontjes en resultaten zijn bewaard.`);
+    result={deleted:true,companyId:targetId,revokedInvitations};break;
+   }
    case'company.update':{
     const targetId=text(p.companyId,'Bedrijf',100);requireManager(actor,targetId);const target=requireCompany(s,targetId),name=text(p.name,'Bedrijfsnaam',120);
     if(s.companies.some(c=>c.id!==targetId&&c.name.toLowerCase()===name.toLowerCase()))fail(409,'Dit bedrijf bestaat al.');
@@ -478,12 +509,12 @@ export function createApp(options={}){
    case'source.scraper.configure':case'source.scraper.test':case'source.scraper.run':case'source.scraper.schedule':case'source.scraper.disconnect':case'source.scraper.retry':{requireChief(actor);const source=managedImportSource(s,p.id);result=scraperBroker.manage(type,p,source.id);if(type==='source.scraper.configure')Object.assign(source,{importConfigured:true,importEnabled:true,enabled:!!source.lastImportAt});if(type!=='source.scraper.retry'||!result.alreadyQueued)addFeed(s,actor,null,type==='source.scraper.retry'?`Ophaalpoging opnieuw ingepland voor ${source.name}`:`Automatisch ophalen ingesteld voor ${source.name}`);break;}
    case'settings.update':{requireChief(actor);if(!Number.isInteger(p.cooldownHours)||p.cooldownHours<0||p.cooldownHours>8760)fail(400,'Gebruik een geheel aantal uren tussen 0 en 8760.');if(p.cooldownUnit!==undefined&&!['hours','days'].includes(p.cooldownUnit))fail(400,'Kies uren of dagen voor de belwachttijd.');const unit=p.cooldownUnit??s.settings.cooldownUnit;s.settings.cooldownHours=p.cooldownHours;s.settings.cooldownUnit=unit;addFeed(s,actor,cid,`Globale belwachttijd ingesteld op ${unit==='days'?Number(p.cooldownHours/24)+' dagen':p.cooldownHours+' uur'}`);break;}
    case'invitation.create':{result=invite(s,actor,p);break;}
-   case'invitation.rotate':{const row=db.prepare('SELECT * FROM invitations WHERE id=?').get(p.invitationId);if(!row)fail(404,'Deze uitnodiging bestaat niet.');requireManager(actor,row.company_id);if(actor.role!=='hoofdbeheerder'&&row.role==='hoofdbeheerder')fail(403,'Je mag deze uitnodiging niet beheren.');if(row.status==='accepted')fail(409,'Deze uitnodiging is al gebruikt.');if(s.users.some(u=>u.email.toLowerCase()===row.email&&u.status==='actief'))fail(409,'Dit account is al actief.');const raw=token();db.prepare("UPDATE invitations SET token_hash=?,status='pending',created_at=?,expires_at=? WHERE id=?").run(digest(raw),Date.now(),Date.now()+INVITE_AGE,row.id);result={invitation:invitationPublic(db.prepare('SELECT * FROM invitations WHERE id=?').get(row.id),s),token:raw};break;}
+   case'invitation.rotate':{const row=db.prepare('SELECT * FROM invitations WHERE id=?').get(p.invitationId);if(!row)fail(404,'Deze uitnodiging bestaat niet.');requireManager(actor,row.company_id);if(row.company_id)requireCompany(s,row.company_id);if(actor.role!=='hoofdbeheerder'&&row.role==='hoofdbeheerder')fail(403,'Je mag deze uitnodiging niet beheren.');if(row.status==='accepted')fail(409,'Deze uitnodiging is al gebruikt.');if(s.users.some(u=>u.email.toLowerCase()===row.email&&u.status==='actief'))fail(409,'Dit account is al actief.');const raw=token();db.prepare("UPDATE invitations SET token_hash=?,status='pending',created_at=?,expires_at=? WHERE id=?").run(digest(raw),Date.now(),Date.now()+INVITE_AGE,row.id);result={invitation:invitationPublic(db.prepare('SELECT * FROM invitations WHERE id=?').get(row.id),s),token:raw};break;}
    case'invitation.revoke':{const row=db.prepare('SELECT * FROM invitations WHERE id=?').get(p.invitationId);if(!row)fail(404,'Deze uitnodiging bestaat niet.');requireManager(actor,row.company_id);if(actor.role!=='hoofdbeheerder'&&row.role==='hoofdbeheerder')fail(403,'Je mag deze uitnodiging niet beheren.');if(row.status==='accepted')fail(409,'Dit account is al geactiveerd.');db.prepare("UPDATE invitations SET status='revoked' WHERE id=?").run(row.id);break;}
    case'invitation.delete':{requireManager(actor,cid);const invitationId=text(p.invitationId,'Uitnodiging',100),row=db.prepare('SELECT * FROM invitations WHERE id=?').get(invitationId);if(!row)fail(404,'Deze uitnodiging bestaat niet.');requireManager(actor,row.company_id);if(actor.role!=='hoofdbeheerder'&&row.role==='hoofdbeheerder')fail(403,'Je mag deze uitnodiging niet beheren.');db.prepare('DELETE FROM invitations WHERE id=?').run(row.id);addFeed(s,actor,row.company_id||null,`Uitnodigingslink verwijderd voor ${row.name}`);break;}
    default:fail(400,'Onbekende actie.');
   }
-  writeState(s);const responseActor=s.users.find(u=>u.id===actor.id);const responseCompany=responseActor.role==='hoofdbeheerder'?cid:responseActor.companyId;return{...scoped(s,responseActor,responseCompany),...(result?{result}:{})};
+  writeState(s);const responseActor=s.users.find(u=>u.id===actor.id);let responseCompany=responseActor.role==='hoofdbeheerder'?cid:responseActor.companyId;if(type==='company.delete'&&!s.companies.some(item=>item.id===responseCompany))responseCompany=s.companies.find(item=>item.id===responseActor.companyId)?.id||s.companies[0]?.id||null;return{...scoped(s,responseActor,responseCompany),...(result?{result}:{})};
  });}
  const assets=new Map([['/','index.html'],['/index.html','index.html'],['/login','index.html'],['/login/','index.html'],['/app.mjs','app.mjs'],['/styles.css','styles.css'],['/model.mjs','model.mjs'],['/admin-overview.mjs','admin-overview.mjs'],['/call-report.mjs','call-report.mjs'],['/selected-contact.mjs','selected-contact.mjs'],['/bouwberichten-filters.mjs','bouwberichten-filters.mjs']]);
  const contentTypes={'.html':'text/html; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};

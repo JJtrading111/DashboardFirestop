@@ -126,7 +126,8 @@ export function reportRows(state, { companyId = 'all', sellerId = 'all', source 
   // The date range defines an acquisition cohort by the lead's creation day in
   // Amsterdam. Later notes, calls and conversion updates do not change membership.
   const rows = new Map();
-  for (const company of state.companies) {
+  const companies = new Map([...(state.archivedCompanies || []), ...state.companies].map(company => [company.id, company]));
+  for (const company of companies.values()) {
     if (companyId !== 'all' && companyId !== company.id) continue;
     for (const lead of state.leads) {
       if (!leadMatchesSource(lead, source)) continue;

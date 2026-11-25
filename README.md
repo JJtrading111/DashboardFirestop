@@ -2,7 +2,11 @@
 
 Nederlandstalig leadbeheer met een centrale leadvoorraad en eigen opvolging per bedrijf. Leads openen in een gecentreerde pop-up. De applicatie bevat Kanban, notities, bellijsten, terugbelafspraken, conversierapportages, bedrijfsbeheer en echte gebruikersaccounts.
 
-De hoofdbeheerder start op **Alle bedrijven in beeld** en kan hetzelfde overzicht openen via **Beheer → Alle bedrijven**. Bedrijfskaarten tonen de actuele opvolging, actieve accounts, belmomenten, afspraken, toezeggingen, calculaties, eigen Kanban-kolommen en laatste activiteit. Alleen beschikbare centrale leads bekijken telt niet als bedrijfsopvolging. De tijdlijn bundelt opgeslagen gesprekken, notities, resultaten en wijzigingen met bedrijf, maker en datum. Bedrijf-, periode- en gebeurtenisfilters gelden voor historie en het bedrijf bij actuele aandachtspunten; de bedrijfskaarten en totaalcijfers blijven de actuele stand van alle bedrijven tonen. De periodefilter verandert geen huidige resultaten. Centrale bronupdates worden één keer opgenomen. Oude gebeurtenissen krijgen alleen de gegevens en tijdstippen die werkelijk zijn vastgelegd.
+De hoofdbeheerder start op **Alle bedrijven in beeld** en kan hetzelfde overzicht openen via **Beheer → Alle bedrijven**. **Nu aandacht nodig** staat bovenaan: verlopen terugbelafspraken, hoge prioriteiten zonder verantwoordelijke en ophaalfouten van bronnen. Daaronder staan de belmomenten per bedrijf en per medewerker, met **Vandaag** of **Deze week** als snelle keuze. Nulactiviteiten blijven zichtbaar. De samenvatting toont vandaag, de huidige kalenderweek en het aantal medewerkers met belmomenten in de gekozen periode. Een klik op een medewerker of bedrijfsrapport opent de passende belrapportage met dezelfde periode. Deze week begint op maandag in `Europe/Amsterdam`.
+
+De tijdlijn toont standaard **Notities en statuswijzigingen** van de laatste zeven dagen, met bedrijf, medewerker, lead en tijdstip. De filters gelden alleen voor deze tijdlijn; urgente aandachtspunten en de belvergelijking blijven over alle bedrijven zichtbaar. Nieuwe statuswijzigingen krijgen een eigen gebeurtenis met de oorspronkelijke en nieuwe kolomnaam. Een gelijktijdig opgeslagen notitie blijft een afzonderlijke gebeurtenis. Oudere algemene wijzigingen blijven beschikbaar onder **Alle gebeurtenissen**; onbekende oude statusdetails worden niet ingevuld of afgeleid. Centrale bronupdates worden één keer opgenomen.
+
+De bestaande bedrijfskaarten staan onder het uitklapbare **Volledige bedrijfsstatus** en tonen actuele opvolging, actieve accounts, afspraken, toezeggingen, calculaties, eigen Kanban-kolommen en laatste activiteit. Alleen beschikbare centrale leads bekijken telt niet als bedrijfsopvolging. Historische filters veranderen geen actuele resultaten.
 
 Vanuit dit overzicht kan de hoofdbeheerder een bedrijfswerkplek of een lead in de juiste bedrijfscontext openen en terugkeren naar dezelfde selectie. Verkopers en bedrijfsbeheerders houden hun eigen dashboard en krijgen geen toegang tot het overzicht van andere bedrijven. Het overzicht ververst ongeveer iedere 30 seconden; open formulieren en filters blijven behouden.
 
@@ -44,11 +48,13 @@ Bij **Uitnodigingslinks → Verwijderen** kun je na bevestiging een regel uit de
 
 ## Bedrijfsnaam en logo
 
-Open **Bedrijven & mensen → Bewerken** om een bedrijfsnaam aan te passen, een logo te uploaden of het bestaande logo te verwijderen. De hoofdbeheerder kan ieder bedrijf bewerken; een bedrijfsbeheerder alleen het eigen bedrijf. Verkopers zien geen bewerkknop.
+Open **Bedrijven & mensen → Logo toevoegen / Logo wijzigen** of **Bewerken** om een bedrijfsnaam aan te passen, een logo te uploaden of het bestaande logo te verwijderen. De hoofdbeheerder kan ieder bedrijf bewerken; een bedrijfsbeheerder alleen het eigen bedrijf. Verkopers zien geen bewerkknop.
 
 De upload accepteert PNG, JPEG en WebP tot 5 MB. De browser verkleint de afbeelding automatisch voor opslag. Het opgeslagen logo verschijnt op de bedrijfskaart, in de zijbalk en in de bovenbalk van de eigen werkplek, ook na opnieuw inloggen. Zonder logo verschijnen de bedrijfsinitialen. Een naamswijziging behoudt gebruikers, Kanban-kolommen en geschiedenis.
 
 Logo's staan als binaire afbeeldingen in de SQLite-database op het persistente volume. Alleen aangemelde gebruikers van het betreffende bedrijf en de hoofdbeheerder kunnen ze opvragen. De server controleert formaat, afmetingen en bestandsgrootte; afbeeldingen van externe URL's en SVG-bestanden worden niet geaccepteerd.
+
+De hoofdbeheerder kan via **Bedrijf verwijderen** een bedrijf zonder gekoppelde gebruikers verwijderen. Ook inactieve gebruikers tellen mee: verplaats hen eerst naar een ander bedrijf. Een bevestiging toont welk bedrijf wordt verwijderd. Open uitnodigingslinks voor dat bedrijf worden ingetrokken. Het bedrijf verdwijnt uit het beheer, de werkplekkeuze en de actieve overzichtspagina; eerdere telefoontjes, notities en resultaten blijven bewaard, inclusief de oorspronkelijke bedrijfsnaam in de rapportages. Verwijderen van de actieve werkplek kiest een beschikbaar ander bedrijf. Zonder bedrijven kan de hoofdbeheerder een nieuw bedrijf toevoegen.
 
 ## Bronnen beheren
 

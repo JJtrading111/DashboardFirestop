@@ -13,17 +13,18 @@ const sortLatest=(a,b)=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.
 
 // This reads the supplied, already-authorized state. It never creates a workspace
 // merely because a central project is available to a company.
-export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='all',activityType='all',limit=30}={}){
+export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='all',attentionCompanyId=companyId,activityType='all',limit=30}={}){
  const instant=Number.isFinite(time(now))?time(now):Date.now(),today=localDay(instant);
+ const weekday=new Date(Date.parse(today+'T12:00:00.000Z')).getUTCDay()||7,weekStart=shiftedDay(today,1-weekday);
  const pageLimit=Number.isSafeInteger(limit)?Math.max(1,Math.min(500,limit)):30;
  const selectedPeriod=['today','7d','30d','all'].includes(period)?period:'7d';
- const selectedType=['all','call','note','followup','update','source','result'].includes(activityType)?activityType:'all';
+ const selectedType=['all','call','note','status','notes-status','followup','update','source','result'].includes(activityType)?activityType:'all';
  const leads=new Map(list(state?.leads).filter(lead=>validId(lead?.id)).map(lead=>[lead.id,lead]));
  const users=new Map(list(state?.users).filter(user=>validId(user?.id)).map(user=>[user.id,user]));
  const rows=new Map(list(state?.companies).filter(company=>validId(company?.id)).map(company=>[company.id,{
   id:company.id,name:words(company.name)||'Onbekend bedrijf',companyId:company.id,companyName:words(company.name)||'Onbekend bedrijf',
   initials:words(company.initials),color:words(company.color),logoUrl:words(company.logoUrl),
-  activeUsers:0,workedLeads:0,totalCalls:0,callsToday:0,notesCount:0,openCallbacks:0,overdueCallbacks:0,
+  activeUsers:0,workedLeads:0,totalCalls:0,callsToday:0,callsThisWeek:0,notesCount:0,openCallbacks:0,overdueCallbacks:0,
   commitments:0,calculations:0,highPriorityUnassigned:0,
   columns:list(company.columns).map(column=>({id:column.id,name:words(column.name)||'Onbekende status',count:0})),lastActivityAt:null
  }]));
@@ -43,7 +44,7 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
   const key=JSON.stringify([row.id,lead.id,call.id||signature]);
   if(canonicalCalls.has(key)||fallback&&callSignatures.has(signature))return;
   canonicalCalls.add(key);callSignatures.add(signature);worked.get(row.id).add(lead.id);
-  row.totalCalls++;if(localDay(time(call.at))===today)row.callsToday++;mark(row,call.at);
+  const callDay=localDay(time(call.at));row.totalCalls++;if(callDay===today)row.callsToday++;if(callDay>=weekStart)row.callsThisWeek++;mark(row,call.at);
   const actorName=actor(call.userName,call.userId),at=new Date(time(call.at)).toISOString();
   const item=event('call',row,lead,{id:'call:'+key,at,actorName,authorName:actorName,
    text:(callOutcomeNames[call.outcome]||'Belmoment geregistreerd')+': '+words(lead.title),detail:[words(call.person),words(call.detail)].filter(Boolean).join(' · ')});
@@ -105,9 +106,10 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
   const key=feed.id||JSON.stringify([feed.companyId,feed.leadId,feed.at,feed.text]);if(seenFeed.has(key))continue;seenFeed.add(key);
   const row=rows.get(feed.companyId),lead=leads.get(feed.leadId),isNote=/^Gespreksnotitie toegevoegd:/i.test(words(feed.text));
   if(feed.type==='call'&&represented(callIndex,feed)||isNote&&represented(noteIndex,feed))continue;
-  const type=!row?'source':feed.type==='call'?'call':isNote?'note':feed.type==='followup'?'followup':'update';
+  const type=!row?'source':feed.type==='call'?'call':isNote?'note':feed.type==='status'?'status':feed.type==='followup'?'followup':'update';
   const actorName=words(feed.authorName)||'Onbekende gebruiker';
-  activity.push(event(type,row,lead,{id:'feed:'+key,at:new Date(time(feed.at)).toISOString(),actorName,authorName:actorName,text:words(feed.text),detail:''}));
+  const rawChange=feed.statusChange,statusChange=type==='status'&&rawChange&&typeof rawChange==='object'&&!Array.isArray(rawChange)&&['fromId','fromName','toId','toName'].every(field=>typeof rawChange[field]==='string')?Object.fromEntries(['fromId','fromName','toId','toName'].map(field=>[field,words(rawChange[field])])):null;
+  activity.push(event(type,row,lead,{id:'feed:'+key,at:new Date(time(feed.at)).toISOString(),actorName,authorName:actorName,actorId:words(feed.authorId),text:words(feed.text),detail:'',...(statusChange?{statusChange}:{})}));
  }
  for(const row of rows.values()){
   row.workedLeads=worked.get(row.id).size;
@@ -119,11 +121,12 @@ export function buildAdminOverview(state,{now=Date.now(),period='7d',companyId='
   }
  }
  const companies=[...rows.values()].sort((a,b)=>a.name.localeCompare(b.name,'nl')||a.id.localeCompare(b.id));
- const keys=['activeUsers','workedLeads','totalCalls','callsToday','notesCount','openCallbacks','overdueCallbacks','commitments','calculations','highPriorityUnassigned'];
+ const keys=['activeUsers','workedLeads','totalCalls','callsToday','callsThisWeek','notesCount','openCallbacks','overdueCallbacks','commitments','calculations','highPriorityUnassigned'];
  const totals={centralLeads:leads.size,companyCount:companies.length,...Object.fromEntries(keys.map(key=>[key,companies.reduce((total,row)=>total+row[key],0)]))};
  const firstDay=selectedPeriod==='today'?today:shiftedDay(today,selectedPeriod==='30d'?-29:-6);
- const filtered=activity.filter(item=>(companyId==='all'||item.companyId===companyId)&&(selectedType==='all'||item.type===selectedType)&&(selectedPeriod==='all'||localDay(time(item.at))>=firstDay)).sort(sortLatest);
- const currentAttention=attention.filter(item=>companyId==='all'||item.companyId===companyId).sort((a,b)=>a.type!==b.type?(a.type==='overdue'?-1:1):a.dueAt&&b.dueAt?time(a.dueAt)-time(b.dueAt)||a.id.localeCompare(b.id):a.companyName.localeCompare(b.companyName,'nl')||a.leadTitle.localeCompare(b.leadTitle,'nl'));
+ const matchesType=item=>selectedType==='all'||(selectedType==='notes-status'?['note','status'].includes(item.type):item.type===selectedType);
+ const filtered=activity.filter(item=>(companyId==='all'||item.companyId===companyId)&&matchesType(item)&&(selectedPeriod==='all'||localDay(time(item.at))>=firstDay)).sort(sortLatest);
+ const currentAttention=attention.filter(item=>attentionCompanyId==='all'||item.companyId===attentionCompanyId).sort((a,b)=>a.type!==b.type?(a.type==='overdue'?-1:1):a.dueAt&&b.dueAt?time(a.dueAt)-time(b.dueAt)||a.id.localeCompare(b.id):a.companyName.localeCompare(b.companyName,'nl')||a.leadTitle.localeCompare(b.leadTitle,'nl'));
  const activityLimited=filtered.length>pageLimit;
- return{generatedAt:new Date(instant).toISOString(),totals,companies,activity:filtered.slice(0,pageLimit),activityTotal:filtered.length,activityLimited,hasMoreActivity:activityLimited,attention:currentAttention.slice(0,pageLimit),attentionTotal:currentAttention.length};
+ return{generatedAt:new Date(instant).toISOString(),today,weekStart,totals,companies,activity:filtered.slice(0,pageLimit),activityTotal:filtered.length,activityLimited,hasMoreActivity:activityLimited,attention:currentAttention.slice(0,pageLimit),attentionTotal:currentAttention.length};
 }
