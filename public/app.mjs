@@ -1,4 +1,4 @@
-import {getWorkspace,callEligibility,callOutcomeNames,reportRows,nextFollowUpAt,sortFollowUpLeads,leadSourceIds,leadMatchesSource,buildAdminOverview,effectiveLeadContact,hasLeadContact,contactFingerprint,partyContact,buildCallReport,buildControlekamer,renderControlekamer,enhanceControlekamer,updateControlekamerClock} from './model.mjs';
+import {getWorkspace,callEligibility,isLeadVisibleToCompany,callOutcomeNames,reportRows,nextFollowUpAt,sortFollowUpLeads,leadSourceIds,leadMatchesSource,buildAdminOverview,effectiveLeadContact,hasLeadContact,contactFingerprint,partyContact,buildCallReport,buildControlekamer,renderControlekamer,enhanceControlekamer,updateControlekamerClock} from './model.mjs';
 
 const PREF='bouwberichten-live-preferences-v1';
 const $=s=>document.querySelector(s);
@@ -8,7 +8,7 @@ const fmt=(v,opts={})=>v?new Intl.DateTimeFormat('nl-NL',{day:'numeric',month:'s
 const day=v=>fmt(v,{hour:undefined,minute:undefined});
 const names={bouw:'Bouwberichten.nl',hotels:'Hotels',vve:'VvE',outlook:'Outlook'};
 const priorityNames={high:'Hoog',medium:'Normaal',low:'Laag'};
-const routes=[['dashboard','Overzicht','grid'],['leads','Alle leads','layers'],['kanban','Kanban','board'],['calls','Bellijst','phone'],['callbacks','Terugbelafspraken','calendar'],['feed','Nieuwsfeed','activity'],['reports','Rapportages','chart'],['sources','Bronnen & koppelingen','link'],['logbook','Logboek','activity'],['deleted-leads','Verwijderde leads','layers'],['all-companies','Alle bedrijven','building'],['team','Bedrijven & gebruikers','users'],['settings','Instellingen','settings']];
+const routes=[['dashboard','Overzicht','grid'],['leads','Alle leads','layers'],['kanban','Kanban','board'],['calls','Bellijst','phone'],['callbacks','Terugbelafspraken','calendar'],['feed','Nieuwsfeed','activity'],['reports','Rapportages','chart'],['seller-overview','Verkopersoverzicht','grid'],['sources','Bronnen & koppelingen','link'],['logbook','Logboek','activity'],['deleted-leads','Verwijderde leads','layers'],['all-companies','Alle bedrijven','building'],['team','Bedrijven & gebruikers','users'],['settings','Instellingen','settings']];
 const icons={grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',layers:'m12 3 9 5-9 5-9-5 9-5 M3 12l9 5 9-5 M3 16l9 5 9-5',board:'M3 4h18v16H3z M9 4v16 M15 4v16 M5.5 8h1 M11.5 8h1 M17.5 8h1',phone:'M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L9 11a16 16 0 0 0 4 4l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z',calendar:'M4 5h16v16H4z M16 3v4 M8 3v4 M4 11h16 M8 15h2 M14 15h2',activity:'M3 12h4l3-8 4 16 3-8h4',chart:'M4 3v17h17 M8 15v-4 M13 15V7 M18 15V4',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',search:'M21 21l-5-5 M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14',plus:'M12 5v14 M5 12h14',bell:'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4',chevron:'m9 5 7 7-7 7',close:'m6 6 12 12 M6 18 18 6',mail:'M3 5h18v14H3z m0 0 9 7 9-7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',check:'m5 12 4 4L19 6',building:'M4 21V3h11v18 M15 10h5v11 M7 7h4 M7 11h4 M7 15h4 M2 21h20',download:'M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5',edit:'m15 4 5 5 M4 20l4-1L21 6l-4-4L4 15z',menu:'M3 6h18 M3 12h18 M3 18h18',shield:'m12 3 9 4v5c0 5-9 9-9 9s-9-4-9-9V7z m-4 9 3 3 5-6',spark:'m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z'};
 const icon=(name)=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.layers}"/></svg>`;
 let state=null,session=null,authError='',authBusy=false,authRemember=false,activation=null,activationToken=null,activationInvalid=false,loggingOut=false,authGeneration=0;
@@ -95,11 +95,18 @@ async function refreshState(companyId=ui.companyId,{renderPage=true,force=false,
  if(loggingOut||version!==refreshVersion||session!==actorSession||!session?.authenticated)return;
  applyServer(result);
  if(recoveredCompany){ui.modal=null;ui.drawer=null;leadDraft=null;leadReturn=null;ui.adminReturn=null;resetFilters();if(ui.adminCompany===companyId)ui.adminCompany='all';}
- if(ui.drawer&&!state.leads.some(lead=>lead.id===ui.drawer)){ui.modal=null;leadDraft=null;closeLeadDrawer({saved:true});toast('Deze lead is voor alle bedrijven verwijderd. De rapportages blijven bewaard.');return result;}
- if(ui.modal&&['callback','call-outcome','project-photo','select-party-contact','delete-lead'].includes(ui.modal.type)&&ui.modal.id&&!state.leads.some(lead=>lead.id===ui.modal.id)){ui.modal=null;render();return result;}
+ if(closeUnavailableLead())return result;
+ if(ui.modal&&['callback','call-outcome','project-photo','select-party-contact','delete-lead'].includes(ui.modal.type)&&ui.modal.id&&!workspaceLeadAvailable(ui.modal.id)){ui.modal=null;render();return result;}
  const editing=ui.modal||ui.drawer||document.activeElement?.matches('input,select,textarea');
  if(recoveredCompany||renderPage&&!(preserveEditing&&editing))render();else{if(ui.route==='deleted-leads')renderDeletedLeadResults();if(preserveEditing&&ui.modal?.type==='source-scraper')renderOverlay();renderToasts();}
  return result;
+}
+function closeUnavailableLead(){
+ if(!ui.drawer||workspaceLeadAvailable(ui.drawer))return false;
+ const archived=state.archivedLeads?.some(lead=>lead.id===ui.drawer);
+ ui.modal=null;leadDraft=null;closeLeadDrawer({saved:true});
+ toast(archived?'Deze lead is voor alle bedrijven verwijderd. De rapportages blijven bewaard.':'Deze lead is tijdelijk niet beschikbaar voor dit bedrijf. De rapportages blijven bewaard.');
+ return true;
 }
 function mutate(type,payload={},targetCompany=ui.companyId||''){
  const actorSession=session,generation=authGeneration;
@@ -110,6 +117,7 @@ function mutate(type,payload={},targetCompany=ui.companyId||''){
   const result=await api('/api/action',{method:'POST',body:{type,companyId:targetCompany,payload}});
   if(loggingOut||generation!==authGeneration||session!==actorSession)throw Error('Je sessie is gewijzigd. Voer de actie opnieuw uit.');
   applyServer(result);
+  closeUnavailableLead();
   return result;
  });
  mutationQueue=job.catch(()=>{});
@@ -213,10 +221,54 @@ async function authenticate(form,data){
  }finally{delete data.password;delete data.passwordConfirm;}
 }
 function toast(text,tone='green'){if(loggingOut)return;const id=uid('toast');transient.push({id,text,tone});renderToasts();setTimeout(()=>{transient=transient.filter(t=>t.id!==id);renderToasts();},6500);}
-function callbacks(){if(!company().id)return[];return state.leads.flatMap(l=>work(l).callbacks.map(cb=>({...cb,lead:l}))).filter(c=>!c.done).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));}
+function callbacks(){if(!company().id)return[];return workspaceLeads().flatMap(l=>work(l).callbacks.map(cb=>({...cb,lead:l}))).filter(c=>!c.done).sort((a,b)=>new Date(a.dueAt)-new Date(b.dueAt));}
 function eligible(l){return callEligibility(state,l.id,company().id,currentUser().id);}
+function workspaceLeadAvailable(leadId){return !!state?.leads.some(lead=>lead.id===leadId)&&(isAdminOverview()||isLeadVisibleToCompany(state,leadId,company().id,currentUser().id));}
+function workspaceLeads(){return state.leads.filter(lead=>workspaceLeadAvailable(lead.id));}
 const projectDateColumns={scheduleStart:'Start bouw',scheduleEnd:'Oplevering'};
-const isProjectDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value??'');
+const leadSortColumns={
+ title:{label:'Project & organisatie',orders:['A naar Z','Z naar A']},
+ scheduleStart:{label:'Start bouw',orders:['vroeg naar laat','laat naar vroeg']},
+ scheduleEnd:{label:'Oplevering',orders:['vroeg naar laat','laat naar vroeg']},
+ source:{label:'Bron',orders:['A naar Z','Z naar A']},
+ priority:{label:'Prioriteit',orders:['hoog naar laag','laag naar hoog']},
+ status:{label:'Status',orders:['eerste naar laatste kolom','laatste naar eerste kolom']},
+ owner:{label:'Verkoper',orders:['A naar Z','Z naar A']},
+ followup:{label:'Opvolging',orders:['belbaar naar wachttijd','wachttijd naar belbaar']}
+};
+const leadCollator=new Intl.Collator('nl-NL',{numeric:true,sensitivity:'base'});
+function compareLeadTitles(a,b){return leadCollator.compare(a.title||'',b.title||'')||leadCollator.compare(a.organization||'',b.organization||'')||leadCollator.compare(a.city||'',b.city||'')||String(a.id).localeCompare(String(b.id));}
+function leadSortValue(lead,field){
+ switch(field){
+  case'title':return String(lead.title||'').trim()||null;
+  case'scheduleStart':case'scheduleEnd':return isProjectDate(lead.projectDetails?.[field])?lead.projectDetails[field]:null;
+  case'source':return leadSourceIds(lead).map(sourceName).sort(leadCollator.compare).join(' · ')||null;
+  case'priority':return ({high:0,medium:1,low:2})[work(lead).priority]??null;
+  case'status':{const rank=company().columns.findIndex(column=>column.id===work(lead).status);return rank<0?null:rank;}
+  case'owner':{const owner=state.users.find(user=>user.id===work(lead).ownerId);return owner?.name?.trim()||null;}
+  case'followup':{const call=eligible(lead);return call.reason==='callback'?0:call.allowed?1:2;}
+  default:return null;
+ }
+}
+function sortLeadRows(leads,sort){
+ const explicit=sort&&Object.hasOwn(leadSortColumns,sort.field)&&['asc','desc'].includes(sort.direction);
+ const values=explicit?new Map(leads.map(lead=>[lead.id,leadSortValue(lead,sort.field)])):null;
+ return [...leads].sort((a,b)=>{
+  if(explicit){
+   const first=values.get(a.id),second=values.get(b.id);
+   if((first===null)!==(second===null))return first===null?1:-1;
+   const difference=first===null?0:typeof first==='number'?first-second:leadCollator.compare(first,second);
+   if(difference)return difference*(sort.direction==='asc'?1:-1);
+   if(sort.field==='title'){const secondary=leadCollator.compare(a.organization||'',b.organization||'')||leadCollator.compare(a.city||'',b.city||'');if(secondary)return secondary*(sort.direction==='asc'?1:-1);}
+  }else{
+   const rank=lead=>({high:0,medium:1,low:2})[work(lead).priority]??1;
+   const updated=lead=>Number.isFinite(Date.parse(lead.updatedAt))?Date.parse(lead.updatedAt):0;
+   const difference=rank(a)-rank(b)||updated(b)-updated(a);if(difference)return difference;
+  }
+  return compareLeadTitles(a,b);
+ });
+}
+const isProjectDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value??'')&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;
 function matchesProjectDate(date,from,to){
  if(!from&&!to)return true;
  return isProjectDate(date)&&(!from||date>=from)&&(!to||date<=to);
@@ -230,22 +282,15 @@ function leadSearchText(lead){
 function filteredLeads(){
  const dateList=ui.route==='leads'||ui.route==='calls',sort=dateList?ui.projectDateSort:null;
  const query=ui.query.trim().toLowerCase();
- return state.leads.filter(l=>{const w=work(l);return (!dateList||(matchesProjectDate(l.projectDetails?.scheduleStart,ui.constructionFrom,ui.constructionTo)&&matchesProjectDate(l.projectDetails?.scheduleEnd,ui.deliveryFrom,ui.deliveryTo)))&&(!query||leadSearchText(l).includes(query))&&(ui.source==='all'||leadMatchesSource(l,ui.source))&&(ui.priority==='all'||w.priority===ui.priority)&&(ui.status==='all'||w.status===ui.status)&&(ui.owner==='all'||w.ownerId===(ui.owner==='me'?currentUser().id:ui.owner))&&(ui.availability==='all'||eligible(l).allowed);}).sort((a,b)=>{
-  if(sort){
-   const first=a.projectDetails?.[sort.field],second=b.projectDetails?.[sort.field];
-   const firstKnown=isProjectDate(first),secondKnown=isProjectDate(second);
-   if(firstKnown!==secondKnown)return firstKnown?-1:1;
-   if(firstKnown&&first!==second)return (first<second?-1:1)*(sort.direction==='asc'?1:-1);
-  }
-  return ({high:0,medium:1,low:2}[work(a).priority]-{high:0,medium:1,low:2}[work(b).priority])||new Date(b.updatedAt)-new Date(a.updatedAt);
- });
+ const leads=workspaceLeads().filter(l=>{const w=work(l);return (!dateList||(matchesProjectDate(l.projectDetails?.scheduleStart,ui.constructionFrom,ui.constructionTo)&&matchesProjectDate(l.projectDetails?.scheduleEnd,ui.deliveryFrom,ui.deliveryTo)))&&(!query||leadSearchText(l).includes(query))&&(ui.source==='all'||leadMatchesSource(l,ui.source))&&(ui.priority==='all'||w.priority===ui.priority)&&(ui.status==='all'||w.status===ui.status)&&(ui.owner==='all'||w.ownerId===(ui.owner==='me'?currentUser().id:ui.owner))&&(ui.availability==='all'||eligible(l).allowed);});
+ return sortLeadRows(leads,sort);
 }
 function navTo(route){adminNavigationVersion++;ui.route=route;ui.drawer=null;ui.modal=null;ui.mobile=false;location.hash=route;render();}
 function btn(text,action,style='secondary',extra=''){return `<button type="button" class="button ${style}" data-action="${action}" ${extra}>${text}</button>`;}
 const activeSources=()=>state.sources.filter(s=>!s.deleted);
 const leadSources=()=>activeSources().filter(s=>s.id!=='outlook'&&s.kind!=='mail');
 const sourceName=id=>state?.sources.find(s=>s.id===id)?.name||names[id]||'Onbekende bron';
-function leadSourceOptions(){return state.sources.filter(s=>s.id!=='outlook'&&s.kind!=='mail'&&(!s.deleted||state.leads.some(l=>leadMatchesSource(l,s.id)))).map(s=>[s.id,s.name+(s.deleted?' (verwijderd)':'')]);}
+function leadSourceOptions(){const leads=ui.route==='reports'?[...state.leads,...(state.reportLeads||[]),...(state.archivedLeads||[])]:workspaceLeads();return state.sources.filter(s=>s.id!=='outlook'&&s.kind!=='mail'&&(!s.deleted||leads.some(l=>leadMatchesSource(l,s.id)))).map(s=>[s.id,s.name+(s.deleted?' (verwijderd)':'')]);}
 function sourceBadge(source){return `<span class="source-chip source-${esc(source)}">${esc(sourceName(source))}</span>`;}
 
 function leadSourceBadges(l){return '<span class="lead-source-badges">'+leadSourceIds(l).map(sourceBadge).join('')+'</span>';}
@@ -492,12 +537,13 @@ function render(){
  disposeControlekamerView();document.body.classList.toggle('ck-dashboard',isControlekamer());
  if(!isChief())ui.companyId=currentUser().companyId;if(!state.companies.some(c=>c.id===ui.companyId))ui.companyId=state.companies[0]?.id||null;
  const page=routes.find(r=>r[0]===ui.route)||routes[0],due=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()).length;
- $('#app').innerHTML=`<div class="app-shell"><aside class="sidebar ${ui.mobile?'open':''}"><a href="#dashboard" class="brand" data-route="dashboard">${dashboardBrand()}</a><div class="nav-label">WERKPLEK</div><nav class="nav-group" aria-label="Hoofdnavigatie">${routes.slice(0,7).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}" ${ui.route===id?'aria-current="page"':''}>${icon(i)}<span>${id==='dashboard'&&isChief()?'Controlekamer':label}</span>${id==='callbacks'&&due?`<span class="nav-count">${due}</span>`:''}</button>`).join('')}</nav><div class="nav-label">BEHEER</div><nav class="nav-group" aria-label="Beheer">${routes.slice(7).filter(([id])=>!['logbook','all-companies','deleted-leads'].includes(id)||isChief()).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}">${icon(i)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-footer"><button class="profile-button" data-action="account"><span class="avatar">${esc(currentUser().name.split(' ').map(s=>s[0]).slice(0,2).join(''))}</span><span><strong>${esc(currentUser().name)}</strong><small>${esc(currentUser().role)}</small></span>${icon('settings')}</button></div></aside><div class="workspace"><header class="topbar"><button class="button icon menu-toggle" data-action="menu" aria-label="Menu openen">${icon('menu')}</button>${mobileCompanyLogo()}<div class="breadcrumbs"><span>Werkplek</span>${icon('chevron')}<strong>${isControlekamer()?'Controlekamer':isAdminOverview()?'Alle bedrijven':esc(page[1])}</strong></div><div class="top-actions"><span class="badge green hide-mobile">${isAdminOverview()?'Hoofdbeheer · Alle bedrijven':'Gedeelde werkplek'}</span>${companyLogoSource(company())?`<img class="workspace-company-logo" src="${esc(companyLogoSource(company()))}" alt="Logo van ${esc(company().name)}">`:''}<label class="sr-only" for="company-switch">${isAdminOverview()?'Open een bedrijfswerkplek':'Actief bedrijf'}</label><select id="company-switch" class="company-switch" data-field="company" ${!isChief()?'disabled':''}>${isAdminOverview()?'<option value="" selected>Open een bedrijf…</option>':''}${state.companies.filter(c=>isChief()||c.id===ui.companyId).map(c=>`<option value="${c.id}" ${!isAdminOverview()&&c.id===ui.companyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select><button class="button icon" data-route="callbacks" aria-label="Terugbelafspraken, ${due} verlopen">${icon('bell')}${due?'<span class="notification-dot"></span>':''}</button></div></header><main id="main" class="main${ui.route==='calls'||ui.route==='leads'?' main-full-width':''}" tabindex="-1">${adminReturnBanner()}${renderPage()}<footer class="page-footer"><span>Bouwberichten Dashboard</span><span>Gedeeld opgeslagen · ${isAdminOverview()?'Alle bedrijven':esc(company().name)} · tijdzone Amsterdam</span></footer></main></div></div>`;
+ $('#app').innerHTML=`<div class="app-shell"><aside class="sidebar ${ui.mobile?'open':''}"><a href="#dashboard" class="brand" data-route="dashboard">${dashboardBrand()}</a><div class="nav-label">WERKPLEK</div><nav class="nav-group" aria-label="Hoofdnavigatie">${routes.slice(0,7).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}" ${ui.route===id?'aria-current="page"':''}>${icon(i)}<span>${id==='dashboard'&&isChief()?'Controlekamer':label}</span>${id==='callbacks'&&due?`<span class="nav-count">${due}</span>`:''}</button>`).join('')}</nav><div class="nav-label">BEHEER</div><nav class="nav-group" aria-label="Beheer">${routes.slice(7).filter(([id])=>!['seller-overview','logbook','all-companies','deleted-leads'].includes(id)||isChief()).map(([id,label,i])=>`<button class="nav-item ${ui.route===id?'active':''}" data-route="${id}">${icon(i)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-footer"><button class="profile-button" data-action="account"><span class="avatar">${esc(currentUser().name.split(' ').map(s=>s[0]).slice(0,2).join(''))}</span><span><strong>${esc(currentUser().name)}</strong><small>${esc(currentUser().role)}</small></span>${icon('settings')}</button></div></aside><div class="workspace"><header class="topbar"><button class="button icon menu-toggle" data-action="menu" aria-label="Menu openen">${icon('menu')}</button>${mobileCompanyLogo()}<div class="breadcrumbs"><span>Werkplek</span>${icon('chevron')}<strong>${isControlekamer()?'Controlekamer':isAdminOverview()?'Alle bedrijven':esc(page[1])}</strong></div><div class="top-actions"><span class="badge green hide-mobile">${isAdminOverview()?'Hoofdbeheer · Alle bedrijven':'Gedeelde werkplek'}</span>${companyLogoSource(company())?`<img class="workspace-company-logo" src="${esc(companyLogoSource(company()))}" alt="Logo van ${esc(company().name)}">`:''}<label class="sr-only" for="company-switch">${isAdminOverview()?'Open een bedrijfswerkplek':'Actief bedrijf'}</label><select id="company-switch" class="company-switch" data-field="company" ${!isChief()?'disabled':''}>${isAdminOverview()?'<option value="" selected>Open een bedrijf…</option>':''}${state.companies.filter(c=>isChief()||c.id===ui.companyId).map(c=>`<option value="${c.id}" ${!isAdminOverview()&&c.id===ui.companyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select><button class="button icon" data-route="callbacks" aria-label="Terugbelafspraken, ${due} verlopen">${icon('bell')}${due?'<span class="notification-dot"></span>':''}</button></div></header><main id="main" class="main${ui.route==='calls'||ui.route==='leads'?' main-full-width':''}" tabindex="-1">${adminReturnBanner()}${renderPage()}<footer class="page-footer"><span>Bouwberichten Dashboard</span><span>Gedeeld opgeslagen · ${isAdminOverview()?'Alle bedrijven':esc(company().name)} · tijdzone Amsterdam</span></footer></main></div></div>`;
  renderOverlay();renderToasts();save();mountControlekamerView();
  if(ui.route==='logbook'&&isChief()&&!sourceLogbook.loaded&&!sourceLogbook.loading)void refreshSourceLogbook();
 }
-function renderPage(){if(!state.companies.length&&['leads','kanban','calls','callbacks','feed'].includes(ui.route))return heading('Voeg een bedrijf toe','Maak een bedrijfswerkplek aan om leads op te volgen.',btn('Bedrijf toevoegen','new-company','primary'));switch(ui.route){case'leads':return leadsPage();case'kanban':return kanbanPage();case'calls':return callsPage();case'callbacks':return callbacksPage();case'feed':return feedPage();case'reports':return reportsPage();case'sources':return sourcesPage();case'logbook':return sourceLogbookPage();case'deleted-leads':return deletedLeadsPage();case'all-companies':return adminOverviewPage();case'team':return teamPage();case'settings':return settingsPage();default:return dashboardPage();}}
-function dashboardPage(){if(isChief())return controlekamerPage();const all=state.leads,available=all.filter(l=>eligible(l).allowed),todo=callbacks(),due=todo.filter(c=>new Date(c.dueAt)<=Date.now()),commitments=all.filter(l=>work(l).commitment).length,calc=all.filter(l=>work(l).calculation).length;return `${heading('Elke kans in beeld.','Van eerste signaal naar een goed gesprek. Dit is je werkvoorraad voor vandaag.',btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary'))}<div class="stats-grid">${stat('Centrale leads',all.length,`${leadSources().length} bronnen`,'layers','blue')}${stat('Nu te bellen',available.length,`${all.length-available.length} binnen de belwachttijd`,'phone','green')}${stat('Terugbelafspraken',todo.length,`${due.length} vragen nu aandacht`,'calendar','amber')}${stat('Toezeggingen',commitments,`${calc} klaar voor calculatie`,'chart','blue')}</div><div class="content-grid"><section class="panel"><div class="panel-head"><div><div class="eyebrow">AAN DE SLAG</div><h2>Kansen om op te pakken</h2></div><button class="button ghost small" data-route="leads">Alle leads bekijken</button></div><div class="filter-row dashboard-filters"><div class="tabs"><button class="tab ${ui.availability==='all'?'active':''}" data-action="dash-filter" data-value="all">Alle kansen</button><button class="tab ${ui.availability==='available'?'active':''}" data-action="dash-filter" data-value="available">Nu belbaar</button><button class="tab ${ui.owner==='me'?'active':''}" data-action="dash-filter" data-value="me">Mijn leads</button></div></div>${leadTable(filteredLeads().slice(0,6),true)}<div class="panel-bottom"><span>${filteredLeads().length} kansen in je selectie</span><button class="button secondary small" data-route="calls">${icon('phone')} Open mijn bellijst</button></div></section><div class="dashboard-right"><section class="panel"><div class="panel-head"><h2>Je terugbelmomenten</h2><span class="badge amber">${due.length} openstaand</span></div><div class="panel-body callback-list">${todo.slice(0,3).map(callbackCard).join('')||'<p class="muted">Je planning is helemaal bij.</p>'}</div><button class="panel-link" data-route="callbacks">Bekijk de volledige planning</button></section><section class="panel"><div class="panel-head"><h2>Laatste signalen</h2>${icon('activity')}</div><div class="news-list">${feedItems().slice(0,3).map(newsItem).join('')}</div><button class="panel-link" data-route="feed">Open de nieuwsfeed</button></section></div></div><section class="sources-strip"><div>${icon('link')}<strong>Je bronnen, op één plek</strong><span class="muted">Beheer de importinstellingen per bron.</span></div><div>${leadSources().map(s=>`${sourceBadge(s.id)}<span class="muted source-demo">${sourceImportStatus(s).label}</span>`).join('')}<button class="button ghost small" data-route="sources">Beheer bronnen</button></div></section>`;}
+function renderPage(){if(!state.companies.length&&['leads','kanban','calls','callbacks','feed'].includes(ui.route))return heading('Voeg een bedrijf toe','Maak een bedrijfswerkplek aan om leads op te volgen.',btn('Bedrijf toevoegen','new-company','primary'));switch(ui.route){case'seller-overview':return !isChief()?heading('Geen toegang','Dit overzicht is alleen beschikbaar voor de hoofdbeheerder.'):!company().id?heading('Voeg een bedrijf toe','Maak een bedrijfswerkplek aan om het verkopersoverzicht te bekijken.',btn('Bedrijf toevoegen','new-company','primary')):sellerDashboardPage();case'leads':return leadsPage();case'kanban':return kanbanPage();case'calls':return callsPage();case'callbacks':return callbacksPage();case'feed':return feedPage();case'reports':return reportsPage();case'sources':return sourcesPage();case'logbook':return sourceLogbookPage();case'deleted-leads':return deletedLeadsPage();case'all-companies':return adminOverviewPage();case'team':return teamPage();case'settings':return settingsPage();default:return dashboardPage();}}
+function dashboardPage(){return isChief()?controlekamerPage():sellerDashboardPage();}
+function sellerDashboardPage(){const all=workspaceLeads(),available=all.filter(l=>eligible(l).allowed),todo=callbacks(),due=todo.filter(c=>new Date(c.dueAt)<=Date.now()),commitments=all.filter(l=>work(l).commitment).length,calc=all.filter(l=>work(l).calculation).length;return `${heading('Elke kans in beeld.','Van eerste signaal naar een goed gesprek. Dit is je werkvoorraad voor vandaag.',btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary'))}<div class="stats-grid">${stat('Centrale leads',all.length,`${leadSources().length} bronnen`,'layers','blue')}${stat('Nu te bellen',available.length,`${all.length-available.length} binnen de belwachttijd`,'phone','green')}${stat('Terugbelafspraken',todo.length,`${due.length} vragen nu aandacht`,'calendar','amber')}${stat('Toezeggingen',commitments,`${calc} klaar voor calculatie`,'chart','blue')}</div><div class="content-grid"><section class="panel"><div class="panel-head"><div><div class="eyebrow">AAN DE SLAG</div><h2>Kansen om op te pakken</h2></div><button class="button ghost small" data-route="leads">Alle leads bekijken</button></div><div class="filter-row dashboard-filters"><div class="tabs"><button class="tab ${ui.availability==='all'?'active':''}" data-action="dash-filter" data-value="all">Alle kansen</button><button class="tab ${ui.availability==='available'?'active':''}" data-action="dash-filter" data-value="available">Nu belbaar</button><button class="tab ${ui.owner==='me'?'active':''}" data-action="dash-filter" data-value="me">Mijn leads</button></div></div>${leadTable(filteredLeads().slice(0,6),true)}<div class="panel-bottom"><span>${filteredLeads().length} kansen in je selectie</span><button class="button secondary small" data-route="calls">${icon('phone')} Open mijn bellijst</button></div></section><div class="dashboard-right"><section class="panel"><div class="panel-head"><h2>Je terugbelmomenten</h2><span class="badge amber">${due.length} openstaand</span></div><div class="panel-body callback-list">${todo.slice(0,3).map(callbackCard).join('')||'<p class="muted">Je planning is helemaal bij.</p>'}</div><button class="panel-link" data-route="callbacks">Bekijk de volledige planning</button></section><section class="panel"><div class="panel-head"><h2>Laatste signalen</h2>${icon('activity')}</div><div class="news-list">${feedItems().slice(0,3).map(newsItem).join('')}</div><button class="panel-link" data-route="feed">Open de nieuwsfeed</button></section></div></div><section class="sources-strip"><div>${icon('link')}<strong>Je bronnen, op één plek</strong><span class="muted">Beheer de importinstellingen per bron.</span></div><div>${leadSources().map(s=>`${sourceBadge(s.id)}<span class="muted source-demo">${sourceImportStatus(s).label}</span>`).join('')}<button class="button ghost small" data-route="sources">Beheer bronnen</button></div></section>`;}
 const adminActivityNames={call:'Belmoment',note:'Notitie',status:'Statuswijziging',followup:'Terugbelafspraak',update:'Wijziging',source:'Bronupdate',result:'Resultaat'};
 function adminReturnBanner(){return isChief()&&ui.adminReturn&&!isAdminOverview()?'<div class="admin-return-bar admin-overview-return"><span>Werkplek van <strong>'+esc(company().name)+'</strong></span>'+btn(ui.adminReturn.route==='dashboard'?'Terug naar Controlekamer':'Terug naar alle bedrijven','admin-return-overview','secondary small')+'</div>':'';}
 function adminStat(key,label,value,meta,name,tone){return '<div data-admin-stat="'+key+'">'+stat(label,value,meta,name,tone)+'</div>';}
@@ -613,7 +659,7 @@ async function openAdminLead(companyId,leadId,target){
  if(!isChief())throw Error('Alleen de hoofdbeheerder kan opvolging van andere bedrijven openen.');
  if(adminNavigationBusy||leadDraft?.saving)return false;
  const origin=ui.route,actorSession=session,version=++adminNavigationVersion;adminNavigationBusy=true;
- try{await mutationQueue;await refreshState(companyId,{renderPage:false,force:true});if(loggingOut||session!==actorSession||version!==adminNavigationVersion||ui.route!==origin||!isChief()||ui.companyId!==companyId)return false;if(!state.leads.some(l=>l.id===leadId))throw Error('Deze lead is niet meer beschikbaar.');openLeadDrawer(leadId,target);return true;}
+ try{await mutationQueue;await refreshState(companyId,{renderPage:false,force:true});if(loggingOut||session!==actorSession||version!==adminNavigationVersion||ui.route!==origin||!isChief()||ui.companyId!==companyId)return false;if(!state.leads.some(l=>l.id===leadId))throw Error('Deze lead is niet meer beschikbaar.');return openLeadDrawer(leadId,target)!==false;}
  finally{adminNavigationBusy=false;}
 }
 function returnAdminOverview(){const back=ui.adminReturn||{route:'all-companies',x:0,y:0};ui.adminReturn=null;navTo(back.route);requestAnimationFrame(()=>window.scrollTo(back.x,back.y));}
@@ -633,16 +679,18 @@ function projectDateFilter(label,key){
 function projectDateFilters(){
  return `<div class="project-date-filters">${projectDateFilter('Start bouw','construction')}${projectDateFilter('Oplevering','delivery')}</div>`;
 }
-function projectDateHeader(field,label){
+function projectDateHeader(field,label){return leadSortHeader(field,label);}
+function leadSortHeader(field,label=leadSortColumns[field]?.label){
  const direction=ui.projectDateSort?.field===field?ui.projectDateSort.direction:null;
- const arrows=[['asc','↑','vroeg naar laat'],['desc','↓','laat naar vroeg']];
- return `<th class="project-date-cell" scope="col"${direction?` aria-sort="${direction==='asc'?'ascending':'descending'}"`:''}><span class="project-date-heading">${label}<span class="project-date-arrows">${arrows.map(([value,arrow,order])=>`<button type="button" id="sort-${field}-${value}" data-action="sort-project-date" data-id="${field}" data-value="${value}" aria-pressed="${direction===value}" aria-label="${label} sorteren van ${order}" title="${label} sorteren van ${order}">${arrow}</button>`).join('')}</span></span></th>`;
+ const orders=leadSortColumns[field]?.orders||['A naar Z','Z naar A'];
+ const arrows=[['asc','↑',orders[0]],['desc','↓',orders[1]]];
+ return `<th class="${Object.hasOwn(projectDateColumns,field)?'project-date-cell ':''}lead-sort-cell" scope="col"${direction?` aria-sort="${direction==='asc'?'ascending':'descending'}"`:''}><span class="project-date-heading">${esc(label)}<span class="project-date-arrows">${arrows.map(([value,arrow,order])=>`<button type="button" id="sort-${field}-${value}" data-action="sort-project-date" data-id="${field}" data-value="${value}" aria-pressed="${direction===value}" aria-label="${esc(label)} sorteren van ${order}" title="${esc(label)} sorteren van ${order}">${arrow}</button>`).join('')}</span></span></th>`;
 }
 function projectDateCell(value){
  const date=projectDay(value);
  return `<td class="project-date-cell">${date?`<time datetime="${esc(value)}">${esc(date)}</time>`:'<span class="muted">Onbekend</span>'}</td>`;
 }
-function leadTable(leads,compact=false){if(!leads.length)return empty();return `<div class="table-wrap"><table><thead><tr><th>Project & organisatie</th>${compact?'':Object.entries(projectDateColumns).map(([field,label])=>projectDateHeader(field,label)).join('')}<th>Bron</th><th>Prioriteit</th><th>Status</th>${compact?'':'<th>Verkoper</th>'}<th>Opvolging</th><th><span class="sr-only">Openen</span></th></tr></thead><tbody>${leads.map(l=>{const w=work(l),e=eligible(l);return `<tr><td><button class="lead-title" data-action="open-lead" data-id="${l.id}">${esc(l.title)}</button><div class="lead-meta">${esc(l.organization)} <span>·</span> ${esc(l.city)}</div></td>${compact?'':`${projectDateCell(l.projectDetails?.scheduleStart)}${projectDateCell(l.projectDetails?.scheduleEnd)}`}<td>${leadSourceBadges(l)}</td><td>${priorityBadge(w.priority)}</td><td><span class="status-pill status-${company().columns.findIndex(c=>c.id===w.status)}">${esc(statusName(w.status))}</span></td>${compact?'':`<td><span class="seller-cell">${esc(w.ownerId?userName(w.ownerId):'Niet toegewezen')}</span></td>`}<td><span class="call-state ${e.allowed?'available':'waiting'}">${icon(e.allowed?'phone':'clock')}${e.reason==='callback'?'Eigen terugbelmoment':e.allowed?'Nu belbaar':'Wachttijd'}</span><div class="lead-meta">${w.commitment?'Toezegging':''}${w.commitment&&w.calculation?' · ':''}${w.calculation?'Calculatie':''}</div></td><td><button class="button icon small" data-action="open-lead" data-id="${l.id}" aria-label="Open ${esc(l.title)}">${icon('chevron')}</button></td></tr>`;}).join('')}</tbody></table></div>`;}
+function leadTable(leads,compact=false){if(!leads.length)return empty();return `<div class="table-wrap"><table><thead><tr>${compact?'<th>Project & organisatie</th><th>Bron</th><th>Prioriteit</th><th>Status</th><th>Opvolging</th>':Object.keys(leadSortColumns).map(field=>leadSortHeader(field)).join('')}<th><span class="sr-only">Openen</span></th></tr></thead><tbody>${leads.map(l=>{const w=work(l),e=eligible(l);return `<tr><td><button class="lead-title" data-action="open-lead" data-id="${l.id}">${esc(l.title)}</button><div class="lead-meta">${esc(l.organization)} <span>·</span> ${esc(l.city)}</div></td>${compact?'':`${projectDateCell(l.projectDetails?.scheduleStart)}${projectDateCell(l.projectDetails?.scheduleEnd)}`}<td>${leadSourceBadges(l)}</td><td>${priorityBadge(w.priority)}</td><td><span class="status-pill status-${company().columns.findIndex(c=>c.id===w.status)}">${esc(statusName(w.status))}</span></td>${compact?'':`<td><span class="seller-cell">${esc(w.ownerId?userName(w.ownerId):'Niet toegewezen')}</span></td>`}<td><span class="call-state ${e.allowed?'available':'waiting'}">${icon(e.allowed?'phone':'clock')}${e.reason==='callback'?'Eigen terugbelmoment':e.allowed?'Nu belbaar':'Wachttijd'}</span><div class="lead-meta">${w.commitment?'Toezegging':''}${w.commitment&&w.calculation?' · ':''}${w.calculation?'Calculatie':''}</div></td><td><button class="button icon small" data-action="open-lead" data-id="${l.id}" aria-label="Open ${esc(l.title)}">${icon('chevron')}</button></td></tr>`;}).join('')}</tbody></table></div>`;}
 function leadsPage(){const leads=filteredLeads();return `${heading('Alle leads','Eén centrale voorraad. De opvolging die je hier ziet, hoort bij je actieve bedrijf.',`${btn(`${icon('download')} Exporteer selectie`,'export','secondary')}${btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')}`)}<section class="panel">${filters()}${projectDateFilters()}<div class="section-heading"><strong data-lead-search-count aria-live="polite">${leads.length} leads</strong><span class="muted">Statussen en notities van ${esc(company().name)}</span></div><div data-lead-search-results>${leadTable(leads)}</div></section>`;}
 function kanbanColumns(leads=filteredLeads()){
  const columns=company().columns.map((c,i)=>{
@@ -673,8 +721,8 @@ function callbackCard(c,inWorkbook=false){
   ${c.description?`<p>${esc(c.description)}</p>`:''}<p class="lead-meta">Voor ${esc(userName(c.assigneeId))} · Gemaakt door ${esc(c.creatorName)}</p>
   <div class="callback-actions">${inWorkbook?'':btn('Open lead','open-lead','ghost small',`data-id="${leadId}"`)}${btn('Wijzigen','edit-callback','ghost small',attributes)}${btn(`${icon('check')} Afgehandeld`,'complete-callback','secondary small',attributes)}</div></article>`;
 }
-function callbacksPage(){const all=callbacks(),due=all.filter(c=>new Date(c.dueAt)<=Date.now());return `${heading('Geen terugbelmoment missen','Afspraken voor jou en je collega’s. De maker blijft zichtbaar bij iedere afspraak.',(state.leads.length?btn(`${icon('plus')} Terugbelafspraak`,'callback','primary'):btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')))}<div class="stats-grid compact-stats">${stat('Open afspraken',all.length,'Binnen dit bedrijf','calendar','blue')}${stat('Nu opvolgen',due.length,'Vervallen terugbelmomenten','clock','amber')}${stat('Voor mij',all.filter(c=>c.assigneeId===currentUser().id).length,'Persoonlijk toegewezen','users','green')}</div><section class="panel"><div class="panel-head"><h2>Planning van ${esc(company().name)}</h2><span class="badge neutral">${all.length} afspraken</span></div><div class="callback-grid panel-body">${all.map(callbackCard).join('')||'<div class="empty-state"><h3>Alle afspraken zijn afgehandeld</h3><p>Maak een nieuwe terugbelafspraak vanuit een lead.</p></div>'}</div></section><p class="muted help-text">Meldingen rechtsonder verschijnen in dit geopende dashboard. Collega’s zien wijzigingen automatisch binnen ongeveer 30 seconden.</p>`;}
-function feedItems(){const items=state.feed.filter(f=>!f.companyId||f.companyId===company().id);const overdue=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()).map(c=>({id:'signal-'+c.id,leadId:c.lead.id,type:'followup',text:`Terugbelmoment voor ${userName(c.assigneeId)}: ${c.lead.title}`,authorName:c.creatorName,at:c.dueAt,companyId:company().id}));return [...overdue,...items].filter(f=>ui.feedFilter==='all'||(ui.feedFilter==='source'?!f.companyId:f.type==='followup')).sort((a,b)=>new Date(b.at)-new Date(a.at));}
+function callbacksPage(){const all=callbacks(),due=all.filter(c=>new Date(c.dueAt)<=Date.now());return `${heading('Geen terugbelmoment missen','Afspraken voor jou en je collega’s. De maker blijft zichtbaar bij iedere afspraak.',(workspaceLeads().length?btn(`${icon('plus')} Terugbelafspraak`,'callback','primary'):btn(`${icon('plus')} Nieuwe lead`,'new-lead','primary')))}<div class="stats-grid compact-stats">${stat('Open afspraken',all.length,'Binnen dit bedrijf','calendar','blue')}${stat('Nu opvolgen',due.length,'Vervallen terugbelmomenten','clock','amber')}${stat('Voor mij',all.filter(c=>c.assigneeId===currentUser().id).length,'Persoonlijk toegewezen','users','green')}</div><section class="panel"><div class="panel-head"><h2>Planning van ${esc(company().name)}</h2><span class="badge neutral">${all.length} afspraken</span></div><div class="callback-grid panel-body">${all.map(callbackCard).join('')||'<div class="empty-state"><h3>Alle afspraken zijn afgehandeld</h3><p>Maak een nieuwe terugbelafspraak vanuit een lead.</p></div>'}</div></section><p class="muted help-text">Meldingen rechtsonder verschijnen in dit geopende dashboard. Collega’s zien wijzigingen automatisch binnen ongeveer 30 seconden.</p>`;}
+function feedItems(){const items=state.feed.filter(f=>(!f.companyId||f.companyId===company().id)&&(!f.leadId||!state.leads.some(lead=>lead.id===f.leadId)||workspaceLeadAvailable(f.leadId)));const overdue=callbacks().filter(c=>new Date(c.dueAt)<=Date.now()).map(c=>({id:'signal-'+c.id,leadId:c.lead.id,type:'followup',text:`Terugbelmoment voor ${userName(c.assigneeId)}: ${c.lead.title}`,authorName:c.creatorName,at:c.dueAt,companyId:company().id}));return [...overdue,...items].filter(f=>ui.feedFilter==='all'||(ui.feedFilter==='source'?!f.companyId:f.type==='followup')).sort((a,b)=>new Date(b.at)-new Date(a.at));}
 function newsItem(f){const lead=state.leads.find(l=>l.id===f.leadId),isGlobal=!f.companyId;return `<article class="news-item"><span class="news-icon ${f.type==='followup'?'amber':isGlobal?'blue':'green'}">${icon(f.type==='followup'?'clock':isGlobal?'layers':'activity')}</span><div class="news-body"><span class="news-kicker">${isGlobal?'CENTRALE PROJECTUPDATE':f.type==='followup'?'OPVOLGSIGNAAL':'JOUW BEDRIJF'}</span><p>${esc(f.text)}</p><div class="news-time">${fmt(f.at)} · ${esc(f.authorName||'Demobron')}${lead?` · <button data-action="open-lead" data-id="${lead.id}" class="text-link">Bekijk lead</button>`:''}</div></div></article>`;}
 function feedPage(){return `${heading('Wat speelt er?','Nieuwe leads, projectwijzigingen en signalen om op te volgen. Alle bronupdates zijn demonstraties.')}<section class="panel"><div class="filter-row"><div class="tabs">${[['all','Alle signalen'],['source','Projectupdates'],['followup','Opvolgsignalen']].map(([v,l])=>`<button class="tab ${ui.feedFilter===v?'active':''}" data-action="feed-filter" data-value="${v}">${l}</button>`).join('')}</div></div><div class="news-list full-news">${feedItems().map(newsItem).join('')||empty('Geen signalen in deze selectie.')}</div></section>`;}
 
@@ -763,6 +811,7 @@ function captureLeadDraft(){
  return draft;
 }
 function openLeadDrawer(id,target){
+ if(!workspaceLeadAvailable(id)){toast('Deze lead is tijdelijk niet beschikbaar voor dit bedrijf.','amber');return false;}
  if(leadDraft?.saving||leadDraft?.contactSelectionSaving)return;
  if(!ui.drawer||!leadReturn||leadReturn.route!==ui.route||leadReturn.companyId!==ui.companyId){const main=$('#main');leadReturn={route:ui.route,companyId:ui.companyId,target,leadId:id,x:window.scrollX,y:window.scrollY,scrolls:['#main','.table-wrap','.kanban'].map(selector=>{const element=selector==='#main'?main:main?.querySelector(selector);return{selector,left:element?.scrollLeft||0,top:element?.scrollTop||0};})};}
  ui.modal=null;if(ui.drawer!==id){drawerScroll=0;leadDraft=null;}ui.drawer=id;getLeadDraft(id);lastFocus=target;renderOverlay();$('#detail-title')?.focus();
@@ -953,7 +1002,7 @@ function workbookFollowupHTML(l,w){
 }
 
 function drawerHTML(){
- const l=state.leads.find(x=>x.id===ui.drawer);if(!l)return '';
+ const l=state.leads.find(x=>x.id===ui.drawer);if(!l||!workspaceLeadAvailable(l.id))return '';
  const w=work(l),d=l.projectDetails??{};
  const context=[d.plan,d.subplan,l.city].filter(Boolean).map(esc).join(' · ');
  return `<div class="detail-overlay" data-action="close-drawer"></div><aside class="detail-drawer workbook-drawer" data-drawer-id="${esc(l.id)}" role="dialog" aria-modal="true" aria-labelledby="detail-title">
@@ -999,7 +1048,7 @@ case'callback':{
  const when=callback?local(new Date(callback.dueAt)):local(new Date(Date.now()+86400000)).slice(0,10)+'T09:00';
  const members=activeUsers(),assignee=callback?.assigneeId??currentUser().id;
  return modalShell(callback?'Terugbelafspraak wijzigen':'Terugbellen plannen',`<form id="callback-form">
-  ${callback?`<input type="hidden" name="leadId" value="${esc(id)}"><input type="hidden" name="callbackId" value="${esc(callback.id)}"><p>${esc(lead.title)}</p>`:`<label class="field"><span>Lead</span><select name="leadId">${state.leads.map(l=>`<option value="${esc(l.id)}" ${l.id===id?'selected':''}>${esc(l.title)}</option>`).join('')}</select></label>`}
+  ${callback?`<input type="hidden" name="leadId" value="${esc(id)}"><input type="hidden" name="callbackId" value="${esc(callback.id)}"><p>${esc(lead.title)}</p>`:`<label class="field"><span>Lead</span><select name="leadId">${workspaceLeads().map(l=>`<option value="${esc(l.id)}" ${l.id===id?'selected':''}>${esc(l.title)}</option>`).join('')}</select></label>`}
   <div class="form-grid"><label class="field"><span>Datum en tijd (Amsterdam)</span><input type="datetime-local" name="dueAt" required value="${when}"></label><label class="field"><span>Voor wie?</span><select name="assigneeId" required>${members.some(u=>u.id===assignee)?'':'<option value="">Kies een verkoper</option>'}${members.map(u=>`<option value="${esc(u.id)}" ${u.id===assignee?'selected':''}>${esc(u.name)}</option>`).join('')}</select></label></div>
   <label class="field"><span>Waarover?</span><input name="description" maxlength="160" value="${esc(callback?.description)}" placeholder="Bijv. bouwplanning navragen"></label>
   ${formButtons('Afspraak opslaan')}</form>`);
@@ -1123,10 +1172,14 @@ document.addEventListener('click',async e=>{
    case'reset-filters':resetFilters();render();break;
    case'sort-project-date':{
     const direction=target.dataset.value;
-    if(!Object.hasOwn(projectDateColumns,id)||!['asc','desc'].includes(direction))return;
-    const previous=ui.projectDateSort;
-    ui.projectDateSort=previous?.field===id&&previous.direction===direction?null:{field:id,direction};
-    render();document.getElementById('sort-'+id+'-'+direction)?.focus();break;
+    if(!Object.hasOwn(leadSortColumns,id)||!['asc','desc'].includes(direction))return;
+    ui.projectDateSort={field:id,direction};
+    const table=$('[data-lead-search-results] .table-wrap'),left=table?.scrollLeft||0;
+    const x=scrollX,y=scrollY;
+    renderLeadSearchResults();
+    const refreshed=$('[data-lead-search-results] .table-wrap');if(refreshed)refreshed.scrollLeft=left;
+    document.getElementById('sort-'+id+'-'+direction)?.focus({preventScroll:true});
+    window.scrollTo(x,y);break;
    }
    case'dash-filter':resetFilters();if(target.dataset.value==='available')ui.availability='available';if(target.dataset.value==='me')ui.owner='me';render();break;
    case'feed-filter':ui.feedFilter=target.dataset.value;render();break;

@@ -256,16 +256,40 @@ test('account activation, invitations, company boundaries and persistent shared 
 
   await t.test('the global cooldown is per lead and an assigned due callback is the exception', async () => {
     accepted(await owner.action('settings.update', 'c-noord', {cooldownHours: 48}));
-    accepted(await deltaAdmin.action('call.record', 'c-delta', {leadId: 'l-02'}));
+    const deltaCall = accepted(await deltaAdmin.action('call.record', 'c-delta', {leadId: 'l-02'})).state.workspaces['c-delta']['l-02'].calls.at(-1);
     denied(await seller.action('call.record', 'c-noord', {leadId: 'l-02'}));
     accepted(await seller.action('call.record', 'c-noord', {leadId: 'l-03'}));
     accepted(await owner.action('callback.add', 'c-noord', {leadId: 'l-02', dueAt: new Date(Date.now() - 60000).toISOString(), assigneeId: owner.user.id}));
     denied(await seller.action('call.record', 'c-noord', {leadId: 'l-02'}));
     accepted(await owner.action('callback.add', 'c-noord', {leadId: 'l-02', dueAt: new Date(Date.now() - 30000).toISOString(), assigneeId: sellerId}));
     accepted(await seller.action('call.record', 'c-noord', {leadId: 'l-02'}));
-    const hidden = accepted(await deltaAdmin.state('c-delta')).state.callLog.filter(c => c.companyId !== 'c-delta');
-    assert.ok(hidden.length > 0);
-    assert.ok(hidden.every(c => !c.userName && !c.userId));
+    const waiting = accepted(await deltaAdmin.state('c-delta')).state;
+    for (const leadId of ['l-02', 'l-03']) {
+      assert.equal(waiting.leads.some(lead => lead.id === leadId), false, 'A foreign call hides only its waiting project');
+      assert.equal(waiting.callLog.some(call => call.leadId === leadId && call.companyId !== 'c-delta'), false, 'Waiting projects expose no foreign call metadata');
+    }
+    assert.ok(waiting.leads.some(lead => lead.id === 'l-04'), 'An unrelated project remains visible');
+    assert.ok(waiting.reportLeads.some(lead => lead.id === 'l-02'), 'Own reporting metadata survives the waiting period');
+    assert.deepEqual(waiting.workspaces['c-delta']['l-02'].calls, [deltaCall], 'Own call history remains intact');
+    assert.ok(waiting.callLog.some(call => call.id === deltaCall.id && call.userId === deltaAdminId));
+
+    // An expired foreign call still supplies anonymized availability context.
+    // Move only this fixture call into the past instead of waiting 48 hours.
+    const expired = accepted(await owner.action('call.record', 'c-noord', {leadId: 'l-04'})).state.callLog.at(-1);
+    const expiredAt = new Date(Date.now() - 49 * 3600000).toISOString();
+    const clockSetup = new DatabaseSync(path.join(env.dataDir, 'dashboard.sqlite'));
+    try {
+      const stored = JSON.parse(clockSetup.prepare('SELECT json FROM app_state WHERE id=1').get().json);
+      stored.callLog.find(call => call.id === expired.id).at = expiredAt;
+      stored.workspaces['c-noord']['l-04'].calls.find(call => call.id === expired.id).at = expiredAt;
+      const event = stored.feed.find(item => item.leadId === 'l-04' && item.type === 'call' && item.at === expired.at);if (event) event.at = expiredAt;
+      clockSetup.prepare('UPDATE app_state SET json=? WHERE id=1').run(JSON.stringify(stored));
+    } finally {clockSetup.close();}
+    const afterExpiry = accepted(await deltaAdmin.state('c-delta')).state;
+    assert.ok(afterExpiry.leads.some(lead => lead.id === 'l-04'));
+    const foreign = afterExpiry.callLog.filter(call => call.companyId !== 'c-delta');
+    assert.ok(foreign.some(call => call.id === expired.id));
+    assert.ok(foreign.every(call => !call.userName && !call.userId));
   });
 
   await t.test('a head administrator can log a call for another company without assigning themselves to that company', async () => {

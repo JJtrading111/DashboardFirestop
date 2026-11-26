@@ -287,9 +287,14 @@
 .project-date-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
 .project-date-heading{display:inline-flex;align-items:center;gap:5px}
 .project-date-arrows{display:inline-flex;gap:2px}
-.project-date-arrows button{display:inline-grid;place-items:center;box-sizing:border-box;min-width:22px;min-height:24px;padding:0 4px;border:1px solid #d5e2ec;border-radius:4px;background:#fff;color:#405d7b;font-size:14px;line-height:1;cursor:pointer}
+.project-date-arrows button{display:inline-grid;place-items:center;box-sizing:border-box;min-width:28px;min-height:30px;padding:0 5px;border:1px solid #d5e2ec;border-radius:4px;background:#fff;color:#405d7b;font-size:14px;line-height:1;cursor:pointer}
 .project-date-arrows button:hover{background:#eef4fa}
 .project-date-arrows button[aria-pressed=true]{border-color:#2759a6;background:#e3edfb;color:#1748a4}
+.project-date-arrows button:focus-visible{outline:2px solid #245de4;outline-offset:2px}
+.lead-sort-cell .project-date-heading{flex-wrap:wrap;gap:5px 8px}
+.lead-sort-cell[aria-sort]{color:#1748a4}
+.main-full-width .table-wrap{position:relative}
+.main-full-width .table-wrap .lead-source-badges{min-width:130px}
 .main.main-full-width{max-width:none;margin-inline:0}
 
 .source-logbook{display:grid;gap:14px;min-width:0}

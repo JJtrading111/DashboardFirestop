@@ -124,7 +124,7 @@ test('company contact details work with the shared lead draft in a real browser'
  });
  await t.test('a saved direct phone respects the cross-company wait even when the central lead has no phone',async t=>{
   const f=await fixture(t,{initialContact:contact});assert.equal(await f.page.locator('[data-contact-person-links] a[href^="tel:"]').count(),1);
-  await f.action('call.record',{leadId:f.lead.id},f.other.id);await f.page.reload();await f.page.locator('#lead-search').waitFor({state:'visible'});await f.open();
+  await f.action('call.record',{leadId:f.lead.id},f.other.id);await f.page.goto(origin+'/#all-companies');await f.page.locator('[data-admin-filter="type"]').selectOption('all');await f.page.locator('[data-action="admin-open-lead"][data-id="'+f.lead.id+'"][data-company-id="c-noord"]').first().click();await f.page.locator('.workbook-contact-person').waitFor({state:'visible'});
   assert.equal(await f.page.locator('[data-contact-person-links] a[href^="tel:"]').count(),0);
   assert.equal(await f.page.locator('[data-contact-person-links] a[href^="mailto:"]').count(),1);await assertValues(f);assert.deepEqual(f.errors,[]);
  });

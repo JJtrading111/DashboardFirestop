@@ -102,7 +102,7 @@ test('a company can select another involved party as the lead contact through th
   await f.page.locator('[data-selected-contact-error]').waitFor({state:'visible'});assert.equal((await f.snapshot()).workspaces['c-noord'][f.lead.id]?.selectedContact,undefined);assert.deepEqual(f.errors,[]);
  });
  await t.test('selected green phone remains subject to the central lead cooldown',async t=>{
-  const f=await fixture(t);await choose(f).click();await confirm(f).click();await selected(f);await f.action('call.record',{leadId:f.lead.id},f.other.id);await f.page.reload();await f.page.locator('#lead-search').waitFor({state:'visible'});await f.open();
+  const f=await fixture(t);await choose(f).click();await confirm(f).click();await selected(f);await f.action('call.record',{leadId:f.lead.id},f.other.id);await f.page.goto(origin+'/#all-companies');await f.page.locator('[data-admin-filter="type"]').selectOption('all');await f.page.locator('[data-action="admin-open-lead"][data-id="'+f.lead.id+'"][data-company-id="c-noord"]').first().click();await f.page.locator('.workbook-drawer').waitFor({state:'visible'});
   assert.equal(await green(f).locator('a[href^="tel:"]').count(),0);assert.match(await green(f).innerText(),/Tijdelijk niet belbaar/);assert.equal(await green(f).locator('a[href^="mailto:"]').count(),1);assert.deepEqual(f.errors,[]);
  });
  await t.test('the party picker and confirmation remain usable on a small mobile screen',async t=>{

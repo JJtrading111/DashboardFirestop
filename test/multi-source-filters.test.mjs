@@ -143,8 +143,15 @@ test('overlapping Bouw filters share one project and preserve shared snapshots, 
   ok(await owner.action('note.add', {leadId: shared.id, text: 'Eigen opvolging op het gedeelde Bouwproject'}));ok(await owner.action('call.record', {leadId: shared.id}));
   const foreign = ok(await owner.action('company.create', {name: 'Tweede bedrijf met dezelfde centrale lead'})).result.company;
   const invite = ok(await owner.action('invitation.create', {name: 'Andere bedrijfverkoper', email: 'filter-colleague@example.test', role: 'verkoper', companyId: foreign.id})).result;ok(await colleague.activate(invite.token, 'Andere bedrijfverkoper'));
-  assert.equal((await colleague.action('call.record', {leadId: shared.id}, foreign.id)).status, 409, 'The same shared lead has one global call-wait lock across all filters');
-  ok(await owner.action('callback.add', {leadId: shared.id, dueAt: new Date(Date.now() - 60000).toISOString(), assigneeId: colleague.user.id}, foreign.id));ok(await colleague.action('call.record', {leadId: shared.id}, foreign.id));
+  assert.equal((await colleague.action('call.record', {leadId: shared.id}, foreign.id)).status, 404, 'The shared lead is unavailable to another company during the global lock across all filters');
+  const waiting = ok(await colleague.state(foreign.id)).state;
+  assert.equal(waiting.leads.some(lead => lead.id === shared.id), false, 'Neither overlapping filter exposes a second visible copy of a waiting project');
+  assert.equal(waiting.callLog.some(call => call.leadId === shared.id), false, 'The waiting project does not expose foreign call metadata');
+  ok(await owner.action('callback.add', {leadId: shared.id, dueAt: new Date(Date.now() - 60000).toISOString(), assigneeId: colleague.user.id}, foreign.id));
+  const restored = ok(await colleague.state(foreign.id)).state.leads.find(lead => lead.id === shared.id);
+  assert.ok(restored, 'An assigned due callback makes the same canonical project available');
+  assert.deepEqual(new Set(restored.sourceIds), new Set([a.id, b.id]));
+  ok(await colleague.action('call.record', {leadId: shared.id}, foreign.id));
   ok(await colleague.action('note.add', {leadId: shared.id, text: 'Afgeschermde notitie van het tweede bedrijf'}, foreign.id));
   const beforeUpdates = ok(await owner.state()).state;const workflows = structuredClone(beforeUpdates.workspaces), calls = structuredClone(beforeUpdates.callLog);
   const bUpdate = {...firstItem, title: 'Nieuwe informatie vanuit filter B', city: 'Amersfoort', sourceUpdatedAt: '2026-11-24T11:00:00Z'};assert.deepEqual(ok(await env.machine(b.id, keyB, 'update-via-b', [bUpdate])).counts, {created: 0, updated: 1, unchanged: 0});

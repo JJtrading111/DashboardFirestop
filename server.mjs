@@ -5,7 +5,7 @@ import {promisify} from 'node:util';
 import {mkdirSync,readFileSync,existsSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {callOutcomeNames,createDemoState,getWorkspace,recordCall,transferUser} from './public/model.mjs';
+import {callOutcomeNames,createDemoState,getWorkspace,recordCall,transferUser,isLeadVisibleToCompany} from './public/model.mjs';
 import {normalizeBouwberichtenFilterUrl} from './public/bouwberichten-filters.mjs';
 import {createScraperBroker} from './scraper/broker.mjs';
 import {effectiveLeadContact,hasLeadContact,contactFingerprint,partyContact} from './public/selected-contact.mjs';
@@ -283,9 +283,19 @@ export function createApp(options={}){
   // Transferred owners remain as anonymous historical labels; never expose their new company or email.
   for(const historicId of referenced)if(!own.some(u=>u.id===historicId)){const original=s.users.find(u=>u.id===historicId);own.push({id:historicId,name:original?.name||'Voormalige medewerker',email:'',companyId:null,role:'verkoper',status:'historisch'});}
   const latest=new Map();for(const call of s.callLog){const old=latest.get(call.leadId);if(!old||Date.parse(call.at)>Date.parse(old.at))latest.set(call.leadId,call);}
-  const {archivedCompanies,archivedLeads,...ownState}=s;
-  const reportArchive=(archivedLeads||[]).filter(lead=>s.workspaces[actor.companyId]?.[lead.id]).map(lead=>({id:lead.id,source:lead.source,...(Array.isArray(lead.sourceIds)?{sourceIds:[...lead.sourceIds]}:{}),createdAt:lead.createdAt}));
-  return{state:{...ownState,...(reportArchive.length?{archivedLeads:reportArchive}:{}),companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:s.workspaces[actor.companyId]||{}},callLog:[...latest.values()].map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null}),feed:s.feed.filter(f=>!f.companyId||f.companyId===actor.companyId),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
+  const now=Date.now(),visibleLeads=s.leads.filter(lead=>isLeadVisibleToCompany(s,lead.id,cid,actor.id,now)),visibleIds=new Set(visibleLeads.map(lead=>lead.id)),hiddenIds=new Set(s.leads.filter(lead=>!visibleIds.has(lead.id)).map(lead=>lead.id));
+  const ownWorkspace=s.workspaces[actor.companyId]||{},metadata=lead=>({id:lead.id,source:lead.source,...(Array.isArray(lead.sourceIds)?{sourceIds:[...lead.sourceIds]}:{}),createdAt:lead.createdAt});
+  const callSummary=call=>Object.fromEntries(['id','at','userId','userName','outcome'].filter(key=>Object.hasOwn(call,key)).map(key=>[key,call[key]]));
+  const scopedWorkspace=Object.fromEntries(Object.entries(ownWorkspace).map(([leadId,w])=>[leadId,hiddenIds.has(leadId)?{ownerId:w.ownerId||null,commitment:!!w.commitment,calculation:!!w.calculation,commitmentAt:w.commitmentAt??null,calculationAt:w.calculationAt??null,calls:(w.calls||[]).map(callSummary),notes:[],callbacks:[]}:w]));
+  const ownHistoricIds=new Set(s.callLog.filter(call=>call.companyId===cid).map(call=>call.leadId));
+  const reportLeads=s.leads.filter(lead=>hiddenIds.has(lead.id)&&(ownWorkspace[lead.id]||ownHistoricIds.has(lead.id))).map(metadata);
+  const {archivedCompanies,archivedLeads,reportLeads:storedReportLeads,...ownState}=s;
+  const reportArchive=(archivedLeads||[]).filter(lead=>ownWorkspace[lead.id]).map(metadata);
+  const scopedCalls=[...latest.values()].filter(call=>!hiddenIds.has(call.leadId)).map(c=>c.companyId===actor.companyId?c:{id:c.id,leadId:c.leadId,companyId:c.companyId,at:c.at,userId:null});
+  for(const call of s.callLog)if(hiddenIds.has(call.leadId)&&call.companyId===cid)scopedCalls.push({...callSummary(call),companyId:cid,leadId:call.leadId});
+  // Hidden projects retain only their own company's numerical reporting context.
+  // The underlying shared lead and full follow-up remain intact for expiry.
+  return{state:{...ownState,leads:visibleLeads,...(reportArchive.length?{archivedLeads:reportArchive}:{}),...(reportLeads.length?{reportLeads}:{}),companies:s.companies.filter(c=>c.id===actor.companyId),users:own,workspaces:{[actor.companyId]:scopedWorkspace},callLog:scopedCalls,feed:s.feed.filter(f=>(!f.companyId||f.companyId===actor.companyId)&&!hiddenIds.has(f.leadId)),invitations:actor.role==='bedrijfsbeheerder'?invitations:[],sources:s.sources.map(src=>({...src,url:'',username:'',filterUrl:'',filterParameters:[]}))},userId:actor.id,companyId:cid};
  }
  function requireCompany(s,cid){const c=s.companies.find(c=>c.id===cid);if(!c)fail(404,'Dit bedrijf bestaat niet.');return c;}
  function accountCompany(s,role,value){
@@ -293,6 +303,7 @@ export function createApp(options={}){
   const companyId=text(value,'Bedrijf',100);requireCompany(s,companyId);return companyId;
  }
  function requireLead(s,lid){const l=s.leads.find(l=>l.id===lid);if(!l)fail(404,'Deze lead bestaat niet.');return l;}
+ function requireVisibleLead(s,lid,actor,cid=actor.companyId){const lead=requireLead(s,lid);if(actor.role!=='hoofdbeheerder'&&!isLeadVisibleToCompany(s,lid,cid,actor.id))fail(404,'Deze lead is momenteel niet beschikbaar.');return lead;}
  function requireMember(s,uid,cid){const u=s.users.find(u=>u.id===uid&&u.companyId===cid&&u.status==='actief');if(!u)fail(400,'Kies een actieve gebruiker van dit bedrijf.');return u;}
  function requireChief(actor){if(actor.role!=='hoofdbeheerder')fail(403,'Alleen de hoofdbeheerder kan dit wijzigen.');}
  function requireManager(actor,cid){if(actor.role==='verkoper'||actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je hebt geen beheerrechten voor dit bedrijf.');}
@@ -390,6 +401,7 @@ export function createApp(options={}){
  }
  function action(actor,type,cid,p,requestOrigin){return transaction(()=>{
   const s=readState(),fresh=s.users.find(u=>u.id===actor.id&&u.status==='actief');if(!fresh)fail(401,'Meld je opnieuw aan.');actor=fresh;const withoutCompany=actor.role==='hoofdbeheerder'&&!cid&&!s.companies.length&&/^(?:company\.|user\.update$|source\.|settings\.update$|invitation\.|demo\.remove$|lead\.delete$)/.test(type),company=withoutCompany?null:requireCompany(s,cid);if(actor.role!=='hoofdbeheerder'&&actor.companyId!==cid)fail(403,'Je kunt alleen je eigen bedrijf wijzigen.');let result;
+  if(actor.role!=='hoofdbeheerder'&&/^(?:workspace\.|note\.add$|call\.record$|callback\.)/.test(type))requireVisibleLead(s,p.leadId,actor,cid);
   switch(type){
    case'lead.delete':{
     requireChief(actor);const leadId=text(p.leadId,'Lead',100),reason=p.reason===undefined?'':text(p.reason,'Reden',1000,0);
@@ -564,7 +576,7 @@ export function createApp(options={}){
    if(req.method==='GET'&&url.pathname==='/api/session'){const session=cookieSession(req);return json(res,200,session?sessionBody(session):{authenticated:false});}
    const leadImageRoute=/^\/api\/lead-images\/(lead-[0-9a-f-]{36})$/.exec(url.pathname);
    if(leadImageRoute&&['GET','HEAD'].includes(req.method)){
-    authorized(req);requireLead(readState(),leadImageRoute[1]);const image=db.prepare('SELECT mime,bytes,version FROM lead_images WHERE lead_id=?').get(leadImageRoute[1]);
+    const session=authorized(req);requireVisibleLead(readState(),leadImageRoute[1],session.user);const image=db.prepare('SELECT mime,bytes,version FROM lead_images WHERE lead_id=?').get(leadImageRoute[1]);
     if(!image||url.searchParams.get('v')!==image.version)fail(404,'Deze projectimpressie bestaat niet.');
     const bytes=Buffer.from(image.bytes);
     res.writeHead(200,{'Content-Type':image.mime,'Content-Length':bytes.length,'Cache-Control':'private, no-store'});

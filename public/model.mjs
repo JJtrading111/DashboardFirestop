@@ -58,6 +58,29 @@ export function sortFollowUpLeads(state, companyId, leads) {
   });
 }
 
+// Visibility follows the inter-company calling lock without creating a private
+// workspace merely because a company requests the central lead inventory.
+export function isLeadVisibleToCompany(state, leadId, companyId, userId, now = Date.now()) {
+  const user = state?.users?.find(user => user.id === userId);
+  if (!user || !state?.companies?.some(company => company.id === companyId) ||
+    !state?.leads?.some(lead => lead.id === leadId) ||
+    user.companyId !== companyId && user.role !== 'hoofdbeheerder') return false;
+  const instant = now instanceof Date ? now.getTime() : typeof now === 'string' ? Date.parse(now) : now;
+  if (!Number.isFinite(instant)) return false;
+  const hours = Math.max(0, Number(state.settings?.cooldownHours) || 0);
+  if (!hours) return true;
+  let latest = null, latestAt = -Infinity;
+  for (const call of Array.isArray(state.callLog) ? state.callLog : []) {
+    if (call?.leadId !== leadId) continue;
+    const at = Date.parse(call.at);
+    if (Number.isFinite(at) && at > latestAt) { latest = call; latestAt = at; }
+  }
+  if (!latest || latest.companyId === companyId || latestAt + hours * HOUR <= instant) return true;
+  const callbacks = state.workspaces?.[companyId]?.[leadId]?.callbacks;
+  return Array.isArray(callbacks) && callbacks.some(callback => callback && !callback.done &&
+    callback.assigneeId === userId && Number.isFinite(Date.parse(callback.dueAt)) && Date.parse(callback.dueAt) <= instant);
+}
+
 export function callEligibility(state, leadId, companyId, userId, now = Date.now()) {
   const workspace = getWorkspace(state, companyId, leadId);
   const user = mustUser(state, userId);
@@ -127,7 +150,7 @@ export function reportRows(state, { companyId = 'all', sellerId = 'all', source 
   // Amsterdam. Later notes, calls and conversion updates do not change membership.
   const rows = new Map();
   const companies = new Map([...(state.archivedCompanies || []), ...state.companies].map(company => [company.id, company]));
-  const leads = new Map([...(Array.isArray(state.archivedLeads) ? state.archivedLeads : []), ...state.leads]
+  const leads = new Map([...(Array.isArray(state.reportLeads) ? state.reportLeads : []), ...(Array.isArray(state.archivedLeads) ? state.archivedLeads : []), ...state.leads]
     .filter(lead => lead && typeof lead.id === 'string' && lead.id).map(lead => [lead.id, lead]));
   for (const company of companies.values()) {
     if (companyId !== 'all' && companyId !== company.id) continue;

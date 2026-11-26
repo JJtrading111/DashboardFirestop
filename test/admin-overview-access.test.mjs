@@ -39,10 +39,10 @@ async function fixture(t){
  const northNote={id:'note-'+randomUUID(),text:'Privénotitie van Noord'},southNote={id:'note-'+randomUUID(),text:'Privénotitie van Zuid'};
  ok(await seller.action('workspace.save',{leadId:shared.id,changes:{status:'opvolgen',priority:'high',ownerId:seller.user.id,contactName:'Contact Noord',contactEmail:'noord-prive@example.test'},note:northNote}));
  ok(await manager.action('workspace.save',{leadId:shared.id,changes:{status:'offerte',ownerId:manager.user.id,contactName:'Contact Zuid',contactEmail:'zuid-prive@example.test',commitment:true,calculation:true},note:southNote},south.id));
- ok(await seller.action('call.record',{leadId:shared.id,outcome:'reached',person:'Gesproken persoon Noord',detail:'Privégesprek Noord'}));
- ok(await manager.action('call.record',{leadId:second.id,outcome:'voicemail',person:'Contact Zuid',detail:'Privégesprek Zuid'},south.id));
  const northCallback=ok(await seller.action('callback.add',{leadId:shared.id,assigneeId:seller.user.id,dueAt:new Date(Date.now()-3600000).toISOString(),description:'Opvolging Noord'})).result.callback;
  const southCallback=ok(await manager.action('callback.add',{leadId:shared.id,assigneeId:manager.user.id,dueAt:new Date(Date.now()+3600000).toISOString(),description:'Opvolging Zuid'},south.id)).result.callback;
+ ok(await seller.action('call.record',{leadId:shared.id,outcome:'reached',person:'Gesproken persoon Noord',detail:'Privégesprek Noord'}));
+ ok(await manager.action('call.record',{leadId:second.id,outcome:'voicemail',person:'Contact Zuid',detail:'Privégesprek Zuid'},south.id));
  return{owner,seller,manager,client,addUser,south,shared,second,northNote,southNote,northCallback,southCallback};
 }
 
