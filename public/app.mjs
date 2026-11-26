@@ -887,7 +887,8 @@ function workbookContactHTML(l,w,e){
    <strong class="workbook-org">${esc(chosen.name||'Organisatie nog niet bekend')}</strong>
    ${selected&&chosen.role?`<p class="muted">${esc(chosen.role)}</p>`:''}
    ${canCall?`<a class="button primary workbook-call" href="tel:${esc(phone)}" data-action="call-link" data-id="${esc(l.id)}">${icon('phone')} Bel ${esc(chosen.phone)}</a>`:phone?`<span class="button disabled workbook-call" aria-disabled="true">${icon('clock')} Tijdelijk niet belbaar</span>`:'<p class="muted">Geen telefoonnummer beschikbaar</p>'}
-   <p class="muted">${people?`${!selected&&w.lastContactPerson?'Gesproken met':'Contactpersoon'} ${esc(people)}`:'Contactpersoon nog niet bekend'}${!selected&&chosen.role==='Hoofdaannemer'&&phone?' · algemeen nummer':''}</p>
+   ${people?`<div class="workbook-contact-name"><span>${!selected&&w.lastContactPerson?'Gesproken met':'Contactpersoon'}</span><strong>${esc(people)}</strong></div>`:'<p class="muted">Contactpersoon nog niet bekend</p>'}
+   ${!selected&&chosen.role==='Hoofdaannemer'&&phone?'<p class="workbook-number-hint">Algemeen nummer</p>':''}
    <div class="workbook-contact-links">${email?`<a href="mailto:${esc(encodeURIComponent(email).replace(/%40/g,'@'))}">E-mail</a>`:''}${website?`<a href="${esc(website)}" target="_blank" rel="noopener noreferrer">Website</a>`:''}${canCall?btn('Kopieer nummer','copy-lead-phone','ghost small',`data-id="${esc(l.id)}"`):''}</div>
    ${phone&&e.reason==='cooldown'?`<div class="call-notice amber"><strong>Wachttijd tot ${fmt(e.until)}</strong><p>Een ander bedrijf heeft deze lead recent gebeld.</p></div>`:phone&&e.reason==='callback'?'<div class="call-notice green">Je eigen terugbelmoment is bereikt.</div>':''}
   </div>
