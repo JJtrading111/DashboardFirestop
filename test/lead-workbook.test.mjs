@@ -130,6 +130,17 @@ test('shared lead opening renders the workbook and both flags directly below the
  const html=vm.runInContext("state=initialState;ui.drawer='lead-workbook';ui.companyId='company';ui.userId='seller';drawerHTML();",context);
  assert.match(html,/workbook-columns/);assert.match(html,/Hoofdaannemer[\s\S]*Voorbeeldaannemer[\s\S]*tel:0302222222/);
  assert.match(html,/Notitie toevoegen<\/button><\/form>\s*<div class="workbook-checks">[\s\S]*Toezegging ontvangen[\s\S]*Klaar voor calculatie/);
+ for(const [input,expected]of [
+  ['M. Maikel Huysmans','Maikel Huysmans'],['M.Maikel Huysmans','Maikel Huysmans'],['M Maikel Huysmans','Maikel Huysmans'],
+  ['É. Émile Durand','Émile Durand'],['J. Jan-Peter de Vries','Jan-Peter de Vries'],
+  ['J. de Vries','J. de Vries'],['V. van Dijk','V. van Dijk'],['J. Jansen','J. Jansen'],['P. Maikel Huysmans','P. Maikel Huysmans'],
+  ['M. J. Maikel Huysmans','M. J. Maikel Huysmans'],['Maikel Huysmans','Maikel Huysmans'],['','']
+ ]){context.personInput=input;assert.equal(vm.runInContext('contactPersonDisplayName(personInput)',context),expected);}
+ context.namedLead={...lead,contact:'M. Maikel Huysmans'};
+ const rawFingerprint=vm.runInContext('contactFingerprint(effectiveLeadContact(namedLead,work(namedLead)))',context);
+ const namedContact=vm.runInContext('workbookContactHTML(namedLead,work(namedLead),{allowed:true})',context);
+ assert.match(namedContact,/<strong>Maikel Huysmans<\/strong>/);assert.doesNotMatch(namedContact,/<strong>M\. Maikel/);
+ assert.equal(context.namedLead.contact,'M. Maikel Huysmans');assert.equal(vm.runInContext('contactFingerprint(effectiveLeadContact(namedLead,work(namedLead)))',context),rawFingerprint);
  const withDate={...lead,projectDetails:{...lead.projectDetails,scheduleStart:'2027-01-10',scheduleEnd:'2027-12-12'}};
  const later={...withDate,id:'lead-later',projectDetails:{scheduleStart:'2027-02-15',scheduleEnd:'2028-01-15'}};
  const unknown={...lead,id:'lead-undated',projectDetails:null};

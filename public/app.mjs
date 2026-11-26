@@ -874,12 +874,19 @@ async function saveSelectedPartyContact(context,confirmed){
   if(state&&ui.drawer===context.id&&ui.companyId===context.companyId&&ui.userId===context.userId){renderOverlay();updateLeadSaveUI();}
  }
 }
+function contactPersonDisplayName(value){
+ const name=String(value??'').trim(),match=name.match(/^([\p{L}])(?:\.\s*|\s+)([\p{L}\p{M}][\p{L}\p{M}'’\-]+)\s+(.+)$/u);
+ if(!match)return name;
+ const normalize=part=>part.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('nl-NL');
+ if(['de','den','der','van','von','te','ten','ter','het','op','in','la','le','du','des','di','da'].includes(normalize(match[2]))||normalize(match[1])!==normalize(Array.from(match[2])[0]))return name;
+ return name.slice(name.indexOf(match[2],match[1].length));
+}
 function workbookContactHTML(l,w,e){
  const d=l.projectDetails??{},chosen=effectiveLeadContact(l,w),selected=!!w.selectedContact,phone=leadPhone(chosen),email=String(chosen.email||'').trim(),website=safeLeadLink(chosen.website),canCall=!!phone&&e.allowed;
  const actorId=currentUser().id;
  const latestOwn=[...w.calls].reverse().find(call=>call.userId===actorId);
  const pending=latestOwn&&!latestOwn.outcome&&Date.now()-Date.parse(latestOwn.at)<8*3600000?latestOwn:null;
- const people=chosen.contact;
+ const people=contactPersonDisplayName(chosen.contact);
  return `<section class="workbook-column" aria-labelledby="workbook-contact">
   <h3 id="workbook-contact">Contact</h3>
   <div class="workbook-contact" data-selected-contact-card>
